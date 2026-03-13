@@ -8,7 +8,7 @@ use tauri::{
     image::Image,
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     menu::{Menu, MenuItem},
-    ActivationPolicy, LogicalSize, Manager, PhysicalPosition, Position, Rect, Size, WindowEvent,
+    ActivationPolicy, LogicalSize, Manager, PhysicalPosition, Position, Rect, RunEvent, Size, WindowEvent,
 };
 use serde::{Deserialize, Serialize};
 use scanner::PortScanner;
@@ -40,15 +40,46 @@ pub struct ScanResult {
     pub errors: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PortRange {
+    pub start: u16,
+    pub end: u16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ScanOptions {
+    pub include_ranges: Vec<PortRange>,
+    pub exclude_ports: Vec<u16>,
+    pub exclude_processes: Vec<String>,
+    pub allow_processes: Vec<String>,
+}
+
 #[tauri::command]
-fn scan_ports() -> Result<ScanResult, String> {
-    let scanner = PortScanner::new();
+fn scan_ports(scan_options: Option<ScanOptions>) -> Result<ScanResult, String> {
+    let scan_options = scan_options.unwrap_or_default();
+    let ranges = scan_options
+        .include_ranges
+        .iter()
+        .map(|range| {
+            if range.start <= range.end {
+                (range.start, range.end)
+            } else {
+                (range.end, range.start)
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let scanner = PortScanner::new().with_port_ranges(ranges);
     let entries = scanner.scan().map_err(|e| e.to_string())?;
     
     let mut process_info = ProcessInfo::new();
     let mut ports = Vec::new();
     
     for entry in &entries {
+        if scan_options.exclude_ports.contains(&entry.port) {
+            continue;
+        }
+
         let process_details = process_info.get_process_details(entry.pid);
         let (process_name, command, work_dir, project_name) = match process_details {
             Some(details) => (details.name, details.command, details.cwd, details.project_name),
@@ -59,6 +90,10 @@ fn scan_ports() -> Result<ScanResult, String> {
                 String::from("未识别来源"),
             ),
         };
+
+        if !matches_process_filters(&scan_options, &process_name, &command, &project_name) {
+            continue;
+        }
         
         ports.push(PortInfo {
             port: entry.port,
@@ -80,6 +115,50 @@ fn scan_ports() -> Result<ScanResult, String> {
         ports,
         errors: Vec::new(),
     })
+}
+
+fn matches_process_filters(
+    scan_options: &ScanOptions,
+    process_name: &str,
+    command: &str,
+    project_name: &str,
+) -> bool {
+    let haystack = format!(
+        "{} {} {}",
+        process_name.to_lowercase(),
+        command.to_lowercase(),
+        project_name.to_lowercase()
+    );
+
+    if scan_options
+        .exclude_processes
+        .iter()
+        .filter(|value| !value.trim().is_empty())
+        .any(|value| haystack.contains(&value.to_lowercase()))
+    {
+        return false;
+    }
+
+    let allow_processes = scan_options
+        .allow_processes
+        .iter()
+        .filter_map(|value| {
+            let normalized = value.trim().to_lowercase();
+            if normalized.is_empty() {
+                None
+            } else {
+                Some(normalized)
+            }
+        })
+        .collect::<Vec<_>>();
+
+    if allow_processes.is_empty() {
+        return true;
+    }
+
+    allow_processes
+        .iter()
+        .any(|value| haystack.contains(value))
 }
 
 #[tauri::command]
@@ -118,11 +197,9 @@ const POPUP_WIDTH: f64 = 440.0;
 const POPUP_HEIGHT: f64 = 380.0;
 const POPUP_MARGIN: f64 = 12.0;
 const TRAY_TOGGLE_DEBOUNCE_MS: u64 = 250;
-const FOCUS_HIDE_GRACE_MS: u64 = 500;
 
 #[derive(Default)]
 struct PopupState {
-    suppress_hide_until: Mutex<Option<Instant>>,
     last_toggle_at: Mutex<Option<Instant>>,
 }
 
@@ -138,27 +215,9 @@ impl PopupState {
         *last_toggle_at = Some(now);
         true
     }
-
-    fn defer_blur_hide(&self) {
-        let mut suppress_hide_until = self.suppress_hide_until.lock().unwrap();
-        *suppress_hide_until = Some(Instant::now() + Duration::from_millis(FOCUS_HIDE_GRACE_MS));
-    }
-
-    fn should_hide_on_blur(&self) -> bool {
-        let now = Instant::now();
-        let mut suppress_hide_until = self.suppress_hide_until.lock().unwrap();
-        match *suppress_hide_until {
-            Some(deadline) if now < deadline => false,
-            Some(_) => {
-                *suppress_hide_until = None;
-                true
-            }
-            None => true,
-        }
-    }
 }
 
-fn toggle_main_window<R: tauri::Runtime>(
+fn show_main_window<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     tray_anchor: Option<(PhysicalPosition<f64>, Rect)>,
 ) {
@@ -172,19 +231,10 @@ fn toggle_main_window<R: tauri::Runtime>(
     };
 
     println!(
-        "[tray] toggle requested visible={} focused={} anchor={}",
+        "[tray] show requested visible={} anchor={}",
         window.is_visible().unwrap_or(false),
-        window.is_focused().unwrap_or(false),
         tray_anchor.is_some()
     );
-
-    let is_visible = window.is_visible().unwrap_or(false);
-    let is_focused = window.is_focused().unwrap_or(false);
-
-    if is_visible && is_focused {
-        let _ = window.hide();
-        return;
-    }
 
     let _ = window.set_size(Size::Logical(LogicalSize::new(POPUP_WIDTH, POPUP_HEIGHT)));
 
@@ -194,7 +244,6 @@ fn toggle_main_window<R: tauri::Runtime>(
         position_window_default(&window);
     }
 
-    popup_state.defer_blur_hide();
     let _ = window.show();
     let _ = window.set_focus();
 }
@@ -215,10 +264,13 @@ fn position_window_near_tray<R: tauri::Runtime>(
     };
 
     let work_area = monitor.work_area();
+    let tray_position = tray_rect
+        .position
+        .to_physical::<f64>(monitor.scale_factor());
     let tray_size = tray_rect.size.to_physical::<f64>(monitor.scale_factor());
-    let tray_center_x = cursor_position.x;
-    let tray_top = cursor_position.y - tray_size.height / 2.0;
-    let tray_bottom = cursor_position.y + tray_size.height / 2.0;
+    let tray_center_x = tray_position.x + (tray_size.width / 2.0);
+    let tray_top = tray_position.y;
+    let tray_bottom = tray_position.y + tray_size.height;
 
     let min_x = work_area.position.x as f64 + POPUP_MARGIN;
     let max_x = work_area.position.x as f64 + work_area.size.width as f64 - POPUP_WIDTH - POPUP_MARGIN;
@@ -226,9 +278,10 @@ fn position_window_near_tray<R: tauri::Runtime>(
 
     let work_top = work_area.position.y as f64 + POPUP_MARGIN;
     let work_bottom = work_area.position.y as f64 + work_area.size.height as f64 - POPUP_HEIGHT - POPUP_MARGIN;
-    let prefer_below = tray_top <= work_area.position.y as f64 + (work_area.size.height as f64 / 2.0);
+    let is_menu_bar_anchor = tray_top <= work_area.position.y as f64;
+    let prefer_below = is_menu_bar_anchor || tray_top <= work_area.position.y as f64 + (work_area.size.height as f64 / 2.0);
     let y = if prefer_below {
-        (tray_bottom + 8.0).clamp(work_top, work_bottom.max(work_top))
+        (tray_bottom + 6.0).clamp(work_top, work_bottom.max(work_top))
     } else {
         (tray_top - POPUP_HEIGHT - 8.0).clamp(work_top, work_bottom.max(work_top))
     };
@@ -258,10 +311,13 @@ fn apply_window_chrome<R: tauri::Runtime>(_window: &tauri::WebviewWindow<R>) {}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .on_window_event(|window, event| match event {
             WindowEvent::CloseRequested { api, .. } => {
                 api.prevent_close();
+                let _ = window.hide();
+            }
+            WindowEvent::Focused(false) => {
                 let _ = window.hide();
             }
             _ => {}
@@ -306,7 +362,7 @@ pub fn run() {
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| {
                     if event.id.as_ref() == "show" {
-                        toggle_main_window(app, None);
+                        show_main_window(app, None);
                     } else if event.id.as_ref() == "quit" {
                         std::process::exit(0);
                     }
@@ -321,7 +377,7 @@ pub fn run() {
                         ..
                     } = event
                     {
-                        toggle_main_window(tray.app_handle(), Some((position, rect)));
+                        show_main_window(tray.app_handle(), Some((position, rect)));
                     }
                 })
                 .build(app)?;
@@ -333,8 +389,14 @@ pub fn run() {
             
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|app_handle, event| {
+        if let RunEvent::Reopen { .. } = event {
+            show_main_window(app_handle, None);
+        }
+    });
 }
 
 #[cfg(debug_assertions)]

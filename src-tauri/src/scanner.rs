@@ -21,15 +21,12 @@ pub struct PortEntry {
 pub struct PortScanner {
     /// 要扫描的端口范围
     port_ranges: Vec<(u16, u16)>,
-    /// 是否只扫描常用开发端口
-    dev_ports_only: bool,
 }
 
 impl PortScanner {
     pub fn new() -> Self {
         Self {
-            port_ranges: vec![(0, u16::MAX)],
-            dev_ports_only: false,
+            port_ranges: Vec::new(),
         }
     }
 
@@ -38,13 +35,6 @@ impl PortScanner {
         self.port_ranges = ranges;
         self
     }
-
-    /// 设置是否只扫描开发端口
-    pub fn with_dev_ports_only(mut self, dev_only: bool) -> Self {
-        self.dev_ports_only = dev_only;
-        self
-    }
-
     /// 扫描所有监听端口
     pub fn scan(&self) -> Result<Vec<PortEntry>, anyhow::Error> {
         #[cfg(target_os = "macos")]
@@ -400,7 +390,7 @@ impl PortScanner {
 
     /// 检查端口是否在指定范围内
     fn is_in_range(&self, port: u16) -> bool {
-        if !self.dev_ports_only {
+        if self.port_ranges.is_empty() {
             return true;
         }
 
