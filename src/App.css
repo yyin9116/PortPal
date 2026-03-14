@@ -66,6 +66,10 @@ body,
 }
 
 body {
+  overflow-x: hidden;
+}
+
+body {
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC",
     "Helvetica Neue", sans-serif;
   background: transparent;
@@ -100,8 +104,7 @@ button {
   gap: 10px;
   padding: 12px;
   border-radius: var(--radius-2xl);
-  background: var(--surface);
-  border: 1px solid var(--border);
+  background: var(--surface-strong);
   backdrop-filter: blur(28px);
   overflow: hidden;
 }
@@ -119,7 +122,7 @@ button {
 .header {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
   position: relative;
   z-index: 1;
 }
@@ -133,6 +136,7 @@ button {
   margin-top: -2px;
   cursor: grab;
   user-select: none;
+  opacity: 0.9;
 }
 
 .window-bar:active {
@@ -174,6 +178,9 @@ button {
   display: flex;
   align-items: center;
   gap: 10px;
+  padding: 6px 8px;
+  border-radius: 14px;
+  background: var(--surface-muted);
 }
 
 .title-row.compact {
@@ -186,7 +193,7 @@ button {
   gap: 6px;
   color: var(--text-muted);
   font-size: 11px;
-  padding-left: 42px;
+  padding-left: 8px;
 }
 
 .brand-mark {
@@ -198,6 +205,11 @@ button {
   background: linear-gradient(135deg, var(--accent-soft), rgba(56, 189, 248, 0.14));
   color: var(--accent);
   flex-shrink: 0;
+}
+
+.brand-logo {
+  width: 16px;
+  height: 16px;
 }
 
 .title {
@@ -225,7 +237,6 @@ button {
   padding: 5px 8px;
   border-radius: 999px;
   background: var(--surface-muted);
-  border: 1px solid var(--border);
   color: var(--text-primary);
   font-size: 11px;
   white-space: nowrap;
@@ -254,13 +265,17 @@ button {
   z-index: 1;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 10px;
-  max-height: min(42vh, 320px);
+  gap: 12px;
+  padding: 12px;
+  max-height: min(46vh, 360px);
   overflow-y: auto;
-  border-radius: 14px;
-  border: 1px solid var(--border);
-  background: var(--surface-muted);
+  border-radius: 16px;
+  background: var(--surface);
+}
+
+.settings-panel.full {
+  flex: 1;
+  max-height: none;
 }
 
 .settings-header {
@@ -272,16 +287,43 @@ button {
   color: var(--text-secondary);
 }
 
+.settings-header.sticky {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding-bottom: 8px;
+  margin-bottom: 4px;
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.12), rgba(15, 23, 42, 0));
+  backdrop-filter: blur(4px);
+}
+
 .settings-title {
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
 
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 12px;
+  background: var(--surface-muted);
+}
+
+.settings-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .settings-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  gap: 6px;
 }
 
 .settings-field {
@@ -296,9 +338,8 @@ button {
   width: 100%;
   resize: vertical;
   min-height: 56px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 8px 9px;
+  border-radius: 12px;
+  padding: 8px 10px;
   background: var(--surface-strong);
   color: var(--text-primary);
   font: inherit;
@@ -316,16 +357,17 @@ button {
 }
 
 .theme-option {
-  border: 1px solid var(--border);
   background: var(--surface-strong);
   color: var(--text-secondary);
-  border-radius: 10px;
-  min-height: 32px;
-  padding: 6px 10px;
+  border-radius: 999px;
+  min-height: 28px;
+  padding: 3px 9px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
   cursor: pointer;
+  font-size: 11px;
+  transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
 }
 
 .theme-option.active {
@@ -341,6 +383,11 @@ button {
   gap: 8px;
 }
 
+.settings-actions .action-link {
+  font-size: 10px;
+  padding: 3px 8px;
+}
+
 .error-content {
   display: flex;
   align-items: center;
@@ -350,8 +397,8 @@ button {
 }
 
 .icon-only-btn {
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   border: none;
   background: rgba(255, 255, 255, 0.14);
   border-radius: 999px;
@@ -366,7 +413,6 @@ button {
 
 .icon-only-btn.subtle {
   background: var(--surface-muted);
-  border: 1px solid var(--border);
   color: var(--text-secondary);
 }
 
@@ -407,10 +453,21 @@ button {
 }
 
 .group-title {
+  position: relative;
   font-size: 12px;
   font-weight: 700;
   color: var(--text-secondary);
   letter-spacing: 0.02em;
+}
+
+.group-title::after {
+  content: "";
+  display: inline-block;
+  height: 1px;
+  width: 32px;
+  margin-left: 8px;
+  background: rgba(148, 163, 184, 0.2);
+  vertical-align: middle;
 }
 
 .group-meta {
@@ -441,7 +498,6 @@ button {
   padding: 40px 18px;
   border-radius: var(--radius-xl);
   background: var(--surface-strong);
-  border: 1px solid var(--border);
   box-shadow: var(--shadow-md);
 }
 
@@ -467,19 +523,41 @@ button {
 
 .port-card {
   position: relative;
+  max-width: 100%;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   gap: 4px;
   padding: 8px 10px;
   border-radius: 12px;
   background: var(--surface-strong);
-  border: 1px solid var(--border);
   box-shadow: none;
+}
+
+.port-card {
+  transition: border-color 0.18s ease, background 0.18s ease;
+}
+
+.port-card:hover {
+  border-color: rgba(15, 118, 110, 0.22);
+  background: var(--surface);
+}
+
+.port-card:hover .card-actions,
+.port-card:focus-within .card-actions {
+  gap: 4px;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.port-card .card-actions {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .port-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
 }
@@ -497,7 +575,7 @@ button {
   display: flex;
   flex-direction: column;
   gap: 3px;
-  padding-right: 44px;
+  max-width: 100%;
 }
 
 .port-line,
@@ -506,17 +584,119 @@ button {
   align-items: center;
   gap: 8px;
   min-width: 0;
-  flex-wrap: wrap;
 }
 
 .port-line {
   min-height: 24px;
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+.port-subline {
+  flex-wrap: nowrap;
+}
+
+.port-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.port-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: nowrap;
+}
+
+
+.site-icon,
+.site-icon-image {
+  width: 16px;
+  height: 16px;
+  border-radius: 5px;
+  flex-shrink: 0;
+}
+
+.site-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+}
+
+.site-icon-image {
+  object-fit: cover;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.site-icon-web {
+  color: #0891b2;
+  background: rgba(34, 211, 238, 0.14);
+  border-color: rgba(34, 211, 238, 0.18);
+}
+
+.site-icon-api {
+  color: #059669;
+  background: rgba(16, 185, 129, 0.14);
+  border-color: rgba(16, 185, 129, 0.18);
+}
+
+.site-icon-db {
+  color: #b45309;
+  background: rgba(245, 158, 11, 0.14);
+  border-color: rgba(245, 158, 11, 0.18);
+}
+
+.site-icon-proxy {
+  color: #c2410c;
+  background: rgba(249, 115, 22, 0.14);
+  border-color: rgba(249, 115, 22, 0.18);
+}
+
+.site-icon-mq {
+  color: #be185d;
+  background: rgba(244, 63, 94, 0.14);
+  border-color: rgba(244, 63, 94, 0.18);
+}
+
+.site-icon-serve {
+  color: #475569;
+  background: rgba(148, 163, 184, 0.14);
+  border-color: rgba(148, 163, 184, 0.18);
 }
 
 .project-name {
   font-size: 12px;
   font-weight: 650;
   color: var(--text-primary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 0 1 auto;
+}
+
+.process-name {
+  font-size: 12px;
+  color: var(--text-secondary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1 1 auto;
+}
+
+.pid-text {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  flex-shrink: 0;
 }
 
 .type-chip,
@@ -533,14 +713,45 @@ button {
 }
 
 .type-chip {
-  background: rgba(56, 189, 248, 0.12);
-  color: #0f5f8a;
+  gap: 4px;
   text-transform: uppercase;
+}
+
+.type-chip-web {
+  background: rgba(34, 211, 238, 0.12);
+  color: #0f7490;
+}
+
+.type-chip-api {
+  background: rgba(16, 185, 129, 0.12);
+  color: #047857;
+}
+
+.type-chip-db {
+  background: rgba(245, 158, 11, 0.12);
+  color: #b45309;
+}
+
+.type-chip-proxy {
+  background: rgba(249, 115, 22, 0.12);
+  color: #c2410c;
+}
+
+.type-chip-mq {
+  background: rgba(244, 63, 94, 0.12);
+  color: #be185d;
+}
+
+.type-chip-serve {
+  background: rgba(148, 163, 184, 0.12);
+  color: #475569;
 }
 
 .port-number {
   background: var(--accent-soft);
   color: var(--accent);
+  font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-variant-numeric: tabular-nums;
 }
 
 .protocol-chip {
@@ -563,6 +774,11 @@ button {
   color: var(--accent-strong);
   font-size: 11px;
   cursor: pointer;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
 }
 
 .address-link:hover {
@@ -572,6 +788,15 @@ button {
 .port-subline {
   color: var(--text-muted);
   gap: 6px;
+}
+
+.path-text {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
 }
 
 .separator {
@@ -591,8 +816,8 @@ button {
 }
 
 .action-icon-btn {
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   justify-content: center;
   color: var(--text-muted);
 }
@@ -613,33 +838,23 @@ button {
 }
 
 .card-actions {
-  position: absolute;
-  top: 6px;
-  right: 6px;
   display: flex;
-  flex-direction: row;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  margin-left: 8px;
+  flex-shrink: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease;
+}
+
+.card-actions-secondary {
+  display: flex;
   align-items: center;
   gap: 6px;
 }
 
-.port-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-  justify-content: flex-start;
-}
-
-.port-actions.inline {
-  margin-top: 1px;
-}
-
-.action-link {
-  padding: 2px 6px;
-  color: var(--text-secondary);
-  font-size: 10px;
-  white-space: nowrap;
-}
 
 .action-link.primary {
   border-color: rgba(15, 118, 110, 0.16);
@@ -700,7 +915,6 @@ button {
   gap: 12px;
   padding: 14px;
   border-radius: 16px;
-  border: 1px solid var(--border);
   background: var(--surface-strong);
   box-shadow: var(--shadow-md);
 }

@@ -2,28 +2,35 @@ import { useEffect, useMemo, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { motion, AnimatePresence } from 'motion/react'
 import {
   AlertCircle,
+  Activity,
   ArrowUpRight,
   ChevronDown,
   ChevronRight,
   CircleX,
   Copy,
+  Database,
   FolderOpen,
+  Globe,
   LoaderCircle,
   Monitor,
   Moon,
+  Network,
   Pin,
   RefreshCw,
   Search,
+  Server,
   SlidersHorizontal,
   Sun,
-  SquareTerminal,
-  Trash2,
-  Wifi,
+    Trash2,
   X,
 } from 'lucide-react'
 import './App.css'
+import { PortPalIcon } from './components/PortPalIcon'
+
+const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 
 interface PortInfo {
   port: number
@@ -70,6 +77,7 @@ interface ScanSettingsForm {
 
 type ThemeMode = 'system' | 'light' | 'dark'
 type DismissedPortKey = string
+type PortType = 'web' | 'api' | 'db' | 'proxy' | 'mq' | 'serve'
 
 interface PendingKillTarget {
   pid: number
@@ -175,11 +183,6 @@ function getPortTitle(port: PortInfo) {
   return project
 }
 
-function getAddressLabel(port: PortInfo) {
-  const normalizedAddress = normalizeText(port.address) || '127.0.0.1'
-  return `${normalizedAddress}:${port.port}`
-}
-
 function getPortType(port: PortInfo) {
   const haystack = `${port.process_name} ${port.command} ${port.project_name}`.toLowerCase()
 
@@ -189,20 +192,20 @@ function getPortType(port: PortInfo) {
     ) ||
     [3306, 5432, 6379, 27017, 11211, 8123].includes(port.port)
   ) {
-    return 'db'
+    return 'db' as PortType
   }
 
   if (
     ['nginx', 'caddy', 'traefik', 'haproxy', 'gateway', 'proxy'].some((keyword) => haystack.includes(keyword))
   ) {
-    return 'proxy'
+    return 'proxy' as PortType
   }
 
   if (
     ['rabbitmq', 'kafka', 'nats', 'queue', 'mq'].some((keyword) => haystack.includes(keyword)) ||
     [5672, 9092, 4222].includes(port.port)
   ) {
-    return 'mq'
+    return 'mq' as PortType
   }
 
   if (
@@ -210,7 +213,7 @@ function getPortType(port: PortInfo) {
       (keyword) => haystack.includes(keyword),
     )
   ) {
-    return 'api'
+    return 'api' as PortType
   }
 
   if (
@@ -219,10 +222,53 @@ function getPortType(port: PortInfo) {
     ) ||
     [3000, 4173, 5173, 8000, 8080].includes(port.port)
   ) {
-    return 'web'
+    return 'web' as PortType
   }
 
-  return 'serve'
+  return 'serve' as PortType
+}
+
+function getBrowserUrl(port: PortInfo) {
+  return `http://localhost:${port.port}`
+}
+
+function getTypeMeta(type: PortType) {
+  switch (type) {
+    case 'web':
+      return { icon: Globe, tone: 'web' }
+    case 'api':
+      return { icon: Server, tone: 'api' }
+    case 'db':
+      return { icon: Database, tone: 'db' }
+    case 'proxy':
+      return { icon: Network, tone: 'proxy' }
+    case 'mq':
+      return { icon: Activity, tone: 'mq' }
+    default:
+      return { icon: Server, tone: 'serve' }
+  }
+}
+
+function PreviewSiteIcon({ port, type }: { port: PortInfo; type: PortType }) {
+  const [iconError, setIconError] = useState(false)
+  const { icon: FallbackIcon, tone } = getTypeMeta(type)
+
+  if (!iconError && (type === 'web' || type === 'api' || type === 'proxy')) {
+    return (
+      <img
+        className="site-icon-image"
+        src={`${getBrowserUrl(port)}/favicon.ico`}
+        alt=""
+        onError={() => setIconError(true)}
+      />
+    )
+  }
+
+  return (
+    <span className={`site-icon site-icon-${tone}`} aria-hidden="true">
+      <FallbackIcon size={12} strokeWidth={1.8} />
+    </span>
+  )
 }
 
 function parseIntegerList(value: string) {
@@ -393,6 +439,12 @@ function App() {
   const totalPorts = visiblePorts.length
 
   const scanPorts = async () => {
+    if (!isTauri) {
+      setLoading(false)
+      setError('扫描失败：当前为浏览器预览，请使用 Tauri 应用运行')
+      return
+    }
+
     setLoading(true)
     setError(null)
     try {
@@ -409,6 +461,11 @@ function App() {
   }
 
   const killProcess = async (pid: number) => {
+    if (!isTauri) {
+      setError('终止失败：当前为浏览器预览，请使用 Tauri 应用运行')
+      return
+    }
+
     try {
       const result: KillResult = await invoke('kill_process', { pid })
       if (result.success) {
@@ -427,6 +484,11 @@ function App() {
   }
 
   const openInBrowser = async (port: number) => {
+    if (!isTauri) {
+      window.open(`http://localhost:${port}`, '_blank')
+      return
+    }
+
     try {
       await invoke('open_in_browser', { port })
     } catch (e) {
@@ -436,13 +498,18 @@ function App() {
 
   const copyAddress = async (port: PortInfo) => {
     try {
-      await navigator.clipboard.writeText(`http://${getAddressLabel(port)}`)
+      await navigator.clipboard.writeText(getBrowserUrl(port))
     } catch (e) {
       setError(`复制失败：${e}`)
     }
   }
 
   const openFolder = async (path: string) => {
+    if (!isTauri) {
+      setError('打开失败：当前为浏览器预览，请使用 Tauri 应用运行')
+      return
+    }
+
     try {
       await invoke('open_folder', { path })
     } catch (e) {
@@ -450,15 +517,12 @@ function App() {
     }
   }
 
-  const openInVscode = async (path: string) => {
-    try {
-      await invoke('open_in_vscode', { path })
-    } catch (e) {
-      setError(`打开失败：${e}`)
-    }
-  }
 
   const hideWindow = async () => {
+    if (!isTauri) {
+      return
+    }
+
     try {
       await getCurrentWindow().hide()
     } catch (e) {
@@ -467,6 +531,10 @@ function App() {
   }
 
   const startDragging = async () => {
+    if (!isTauri) {
+      return
+    }
+
     try {
       await getCurrentWindow().startDragging()
     } catch (e) {
@@ -503,6 +571,10 @@ function App() {
   }, [groupedPorts])
 
   useEffect(() => {
+    if (!isTauri) {
+      return
+    }
+
     scanPorts()
 
     const unlisten = listen('portpal-scan', () => {
@@ -515,6 +587,10 @@ function App() {
   }, [])
 
   useEffect(() => {
+    if (!isTauri) {
+      return
+    }
+
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         void getCurrentWindow().hide()
@@ -601,7 +677,7 @@ function App() {
           <div className="title-group">
             <div className="title-row compact">
               <div className="brand-mark" aria-hidden="true">
-                <Wifi size={18} strokeWidth={1.8} />
+                <PortPalIcon className="brand-logo" />
               </div>
               <div className="title-copy">
                 <h1 className="title">PortPal</h1>
@@ -622,9 +698,18 @@ function App() {
           </div>
         </header>
 
-        {showSettings && (
-          <section className="settings-panel">
-            <div className="settings-header">
+        <AnimatePresence>
+          {showSettings && (
+            <motion.section
+              className="settings-panel full"
+              role="region"
+              aria-label="扫描设置"
+              initial={{ opacity: 0, y: 8, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 8, scale: 0.98 }}
+              transition={{ duration: 0.2, ease: 'easeOut' }}
+            >
+            <div className="settings-header sticky">
               <div className="settings-title">
                 <strong>扫描设置</strong>
                 <span>留空表示不限制</span>
@@ -638,90 +723,96 @@ function App() {
                 <X size={16} strokeWidth={1.8} />
               </button>
             </div>
-            <div className="settings-grid">
-              <label className="settings-field">
-                <span>界面主题</span>
-                <div className="theme-switcher" role="radiogroup" aria-label="界面主题">
-                  {([
-                    ['system', '跟随系统', Monitor],
-                    ['light', '浅色', Sun],
-                    ['dark', '深色', Moon],
-                  ] as const).map(([mode, label, Icon]) => (
-                    <button
-                      key={mode}
-                      type="button"
-                      className={`theme-option${settings.themeMode === mode ? ' active' : ''}`}
-                      onClick={() =>
-                        setSettings((current) => ({
-                          ...current,
-                          themeMode: mode,
-                        }))
-                      }
-                      aria-pressed={settings.themeMode === mode}
-                    >
-                      <Icon size={16} strokeWidth={1.8} />
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </label>
-              <label className="settings-field">
-                <span>扫描范围</span>
-                <textarea
-                  value={settings.includeRanges}
-                  onChange={(event) =>
-                    setSettings((current) => ({
-                      ...current,
-                      includeRanges: event.target.value,
-                    }))
-                  }
-                  placeholder={'示例: 80, 3000-3999, 8080'}
-                  rows={2}
-                />
-              </label>
-              <label className="settings-field">
-                <span>排除端口</span>
-                <textarea
-                  value={settings.excludePorts}
-                  onChange={(event) =>
-                    setSettings((current) => ({
-                      ...current,
-                      excludePorts: event.target.value,
-                    }))
-                  }
-                  placeholder={'示例: 22, 3306, 5432'}
-                  rows={2}
-                />
-              </label>
-              <label className="settings-field">
-                <span>排除进程</span>
-                <textarea
-                  value={settings.excludeProcesses}
-                  onChange={(event) =>
-                    setSettings((current) => ({
-                      ...current,
-                      excludeProcesses: event.target.value,
-                    }))
-                  }
-                  placeholder={'示例: postgres, Dropbox, ControlCenter'}
-                  rows={2}
-                />
-              </label>
-              <label className="settings-field">
-                <span>白名单进程</span>
-                <textarea
-                  value={settings.allowProcesses}
-                  onChange={(event) =>
-                    setSettings((current) => ({
-                      ...current,
-                      allowProcesses: event.target.value,
-                    }))
-                  }
-                  placeholder={'示例: node, bun, python, java'}
-                  rows={2}
-                />
-              </label>
+
+            <div className="settings-section">
+              <div className="settings-section-title">界面主题</div>
+              <div className="theme-switcher" role="radiogroup" aria-label="界面主题">
+                {([
+                  ['system', '跟随系统', Monitor],
+                  ['light', '浅色', Sun],
+                  ['dark', '深色', Moon],
+                ] as const).map(([mode, label, Icon]) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    className={`theme-option${settings.themeMode === mode ? ' active' : ''}`}
+                    onClick={() =>
+                      setSettings((current) => ({
+                        ...current,
+                        themeMode: mode,
+                      }))
+                    }
+                    aria-pressed={settings.themeMode === mode}
+                  >
+                    <Icon size={16} strokeWidth={1.8} />
+                    {label}
+                  </button>
+                ))}
+              </div>
             </div>
+
+            <div className="settings-section">
+              <div className="settings-section-title">扫描规则</div>
+              <div className="settings-grid">
+                <label className="settings-field">
+                  <span>扫描范围</span>
+                  <textarea
+                    value={settings.includeRanges}
+                    onChange={(event) =>
+                      setSettings((current) => ({
+                        ...current,
+                        includeRanges: event.target.value,
+                      }))
+                    }
+                    placeholder={'示例: 80, 3000-3999, 8080'}
+                    rows={2}
+                  />
+                </label>
+                <label className="settings-field">
+                  <span>排除端口</span>
+                  <textarea
+                    value={settings.excludePorts}
+                    onChange={(event) =>
+                      setSettings((current) => ({
+                        ...current,
+                        excludePorts: event.target.value,
+                      }))
+                    }
+                    placeholder={'示例: 22, 3306, 5432'}
+                    rows={2}
+                  />
+                </label>
+                <label className="settings-field">
+                  <span>排除进程</span>
+                  <textarea
+                    value={settings.excludeProcesses}
+                    onChange={(event) =>
+                      setSettings((current) => ({
+                        ...current,
+                        excludeProcesses: event.target.value,
+                      }))
+                    }
+                    placeholder={'示例: postgres, Dropbox, ControlCenter'}
+                    rows={2}
+                  />
+                </label>
+                <label className="settings-field">
+                  <span>白名单进程</span>
+                  <textarea
+                    value={settings.allowProcesses}
+                    onChange={(event) =>
+                      setSettings((current) => ({
+                        ...current,
+                        allowProcesses: event.target.value,
+                      }))
+                    }
+                    placeholder={'示例: node, bun, python, java'}
+                    rows={2}
+                  />
+                </label>
+              </div>
+            </div>
+
             <div className="settings-actions">
               <button
                 type="button"
@@ -749,8 +840,9 @@ function App() {
                 立即应用
               </button>
             </div>
-          </section>
-        )}
+            </motion.section>
+          )}
+        </AnimatePresence>
 
         {error && (
           <div className="error-banner">
@@ -768,200 +860,186 @@ function App() {
           </div>
         )}
 
-        <div className="port-list">
-          {totalPorts === 0 ? (
-            <div className="empty-state">
-              <div className="empty-icon" aria-hidden="true">
-                <Search size={20} strokeWidth={1.8} />
+        {!showSettings && (
+          <div className="port-list">
+            {totalPorts === 0 ? (
+              <div className="empty-state">
+                <div className="empty-icon" aria-hidden="true">
+                  <Search size={20} strokeWidth={1.8} />
+                </div>
+                <p>未发现监听的开发端口</p>
+                <p className="hint">如果本地服务已启动，可点击右上角重新扫描</p>
               </div>
-              <p>未发现监听的开发端口</p>
-              <p className="hint">如果本地服务已启动，可点击右上角重新扫描</p>
-            </div>
-          ) : (
-            groupedPorts.map(([groupName, groupPorts]) => (
-              <section key={groupName} className="port-group">
-                <div className="group-header">
-                  <button
-                    type="button"
-                    className="group-toggle"
-                    onClick={() => toggleGroupCollapsed(groupName)}
-                    aria-expanded={!collapsedGroups.includes(groupName)}
-                    aria-label={`${collapsedGroups.includes(groupName) ? '展开' : '折叠'} ${groupName}`}
-                  >
-                    {collapsedGroups.includes(groupName) ? (
-                      <ChevronRight size={16} strokeWidth={1.8} />
-                    ) : (
-                      <ChevronDown size={16} strokeWidth={1.8} />
-                    )}
-                    <span className="group-title">{groupName}</span>
-                  </button>
-                  <div className="group-meta">
-                    <span className="group-count">{groupPorts.length} 个端口</span>
+            ) : (
+              groupedPorts.map(([groupName, groupPorts]) => (
+                <section key={groupName} className="port-group">
+                  <div className="group-header">
                     <button
                       type="button"
-                      className={`icon-only-btn subtle group-pin${pinnedGroups.includes(groupName) ? ' active' : ''}`}
-                      onClick={() => toggleGroupPinned(groupName)}
-                      aria-label={`${pinnedGroups.includes(groupName) ? '取消置顶' : '置顶'} ${groupName}`}
-                      title={pinnedGroups.includes(groupName) ? '取消置顶' : '置顶'}
+                      className="group-toggle"
+                      onClick={() => toggleGroupCollapsed(groupName)}
+                      aria-expanded={!collapsedGroups.includes(groupName)}
+                      aria-label={`${collapsedGroups.includes(groupName) ? '展开' : '折叠'} ${groupName}`}
                     >
-                      <Pin size={16} strokeWidth={1.8} />
+                      {collapsedGroups.includes(groupName) ? (
+                        <ChevronRight size={16} strokeWidth={1.8} />
+                      ) : (
+                        <ChevronDown size={16} strokeWidth={1.8} />
+                      )}
+                      <span className="group-title">{groupName}</span>
                     </button>
+                    <div className="group-meta">
+                      <span className="group-count">{groupPorts.length} 个端口</span>
+                      <button
+                        type="button"
+                        className={`icon-only-btn subtle group-pin${pinnedGroups.includes(groupName) ? ' active' : ''}`}
+                        onClick={() => toggleGroupPinned(groupName)}
+                        aria-label={`${pinnedGroups.includes(groupName) ? '取消置顶' : '置顶'} ${groupName}`}
+                        title={pinnedGroups.includes(groupName) ? '取消置顶' : '置顶'}
+                      >
+                        <Pin size={16} strokeWidth={1.8} />
+                      </button>
+                    </div>
                   </div>
-                </div>
 
-                {!collapsedGroups.includes(groupName) && (
-                  <div className="group-list">
-                    {groupPorts.map((port, index) => {
-                      const hasWorkDir = hasMeaningfulValue(port.work_dir)
-                      const groupScopedTitle = getPortTitle(port) === groupName ? null : getPortTitle(port)
-                      const addressLabel = getAddressLabel(port)
-                      const portType = getPortType(port)
+                  {!collapsedGroups.includes(groupName) && (
+                    <div className="group-list">
+                      {groupPorts.map((port, index) => {
+                        const hasWorkDir = hasMeaningfulValue(port.work_dir)
+                        const groupScopedTitle = getPortTitle(port) === groupName ? null : getPortTitle(port)
+                          const portType = getPortType(port)
+                        const typeMeta = getTypeMeta(portType)
 
-                      return (
-                        <div key={`${port.pid}-${port.port}-${index}`} className="port-card">
-                          <div className="port-row">
-                            <div className="port-leading">
-                              <div className="port-content">
-                                <div className="port-line">
-                                  <span className="port-number">{port.port}</span>
-                                  {groupScopedTitle ? <span className="project-name">{groupScopedTitle}</span> : null}
-                                  <span className="type-chip">{portType}</span>
-                                  <span className="protocol-chip">{port.protocol}</span>
-                                  <button
-                                    type="button"
-                                    className="address-link"
-                                    onClick={() => openInBrowser(port.port)}
-                                    title={`打开 http://${addressLabel}`}
-                                  >
-                                    {addressLabel}
-                                  </button>
+                        return (
+                          <div key={`${port.pid}-${port.port}-${index}`} className="port-card">
+                            <div className="port-row">
+                              <div className="port-leading">
+                                <div className="port-content">
+                                  <div className="port-line">
+                                    <PreviewSiteIcon port={port} type={portType} />
+                                    <span className="port-number">{port.port}</span>
+                                    {groupScopedTitle ? <span className="project-name">{groupScopedTitle}</span> : null}
+                                    <span className={`type-chip type-chip-${typeMeta.tone}`}>{portType}</span>
+                                    <span className="protocol-chip">{port.protocol}</span>
+                                    <span className="port-meta">
+                                      <span className="process-name">{getProcessLabel(port)}</span>
+                                    </span>
+                                    
+                                  </div>
+                                  <div className="port-subline">
+                                    <span className="path-text">{getSourceSummary(port)}</span>
+                                    <span className="pid-text">PID {port.pid}</span>
+                                  </div>
                                 </div>
-                                <div className="port-subline">
-                                  <span>{getProcessLabel(port)}</span>
-                                  <span className="separator">·</span>
-                                  <span>{getSourceSummary(port)}</span>
-                                  <span className="separator">·</span>
-                                  <span>PID {port.pid}</span>
-                                </div>
-                                <div className="port-actions inline">
+                              </div>
+
+                              <div className="card-actions">
+                                <div className="port-actions">
                                   <button
-                                    className="action-link"
+                                    className="action-icon-btn"
                                     onClick={() => openInBrowser(port.port)}
                                     title="在浏览器中打开"
                                   >
                                     <ArrowUpRight size={16} strokeWidth={1.8} />
-                                    打开
                                   </button>
                                   <button
-                                    className="action-link"
+                                    className="action-icon-btn"
                                     onClick={() => copyAddress(port)}
                                     title="复制本地地址"
                                   >
                                     <Copy size={16} strokeWidth={1.8} />
-                                    复制地址
                                   </button>
                                   <button
-                                    className="action-link"
+                                    className="action-icon-btn"
                                     onClick={() => openFolder(port.work_dir)}
                                     title="打开项目目录"
                                     disabled={!hasWorkDir}
                                   >
                                     <FolderOpen size={16} strokeWidth={1.8} />
-                                    目录
                                   </button>
                                   <button
-                                    className="action-link"
-                                    onClick={() => openInVscode(port.work_dir)}
-                                    title="在 VSCode 中打开"
-                                    disabled={!hasWorkDir}
+                                    className="action-icon-btn terminate"
+                                    onClick={() =>
+                                      setPendingKill({
+                                        pid: port.pid,
+                                        port: port.port,
+                                        label: groupScopedTitle ?? groupName,
+                                      })
+                                    }
+                                    title="终止服务并释放端口"
+                                    aria-label={`终止端口 ${port.port} 的服务并释放端口`}
                                   >
-                                    <SquareTerminal size={16} strokeWidth={1.8} />
-                                    VSCode
+                                    <CircleX size={16} strokeWidth={1.8} />
+                                  </button>
+                                  <button
+                                    className="action-icon-btn dismiss"
+                                    onClick={() => dismissPort(port)}
+                                    title="删除条目"
+                                    aria-label={`删除端口 ${port.port} 的条目`}
+                                  >
+                                    <Trash2 size={16} strokeWidth={1.8} />
                                   </button>
                                 </div>
                               </div>
                             </div>
-
-                            <div className="card-actions">
-                              <button
-                                className="action-icon-btn dismiss"
-                                onClick={() => dismissPort(port)}
-                                title="删除条目"
-                                aria-label={`删除端口 ${port.port} 的条目`}
-                              >
-                                <Trash2 size={16} strokeWidth={1.8} />
-                              </button>
-                              <button
-                                className="action-icon-btn terminate"
-                                onClick={() =>
-                                  setPendingKill({
-                                    pid: port.pid,
-                                    port: port.port,
-                                    label: groupScopedTitle ?? groupName,
-                                  })
-                                }
-                                title="终止服务并释放端口"
-                                aria-label={`终止端口 ${port.port} 的服务并释放端口`}
-                              >
-                                <CircleX size={16} strokeWidth={1.8} />
-                              </button>
-                            </div>
                           </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
-              </section>
-            ))
-          )}
-        </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </section>
+              ))
+            )}
+          </div>
+        )}
 
-        <footer className="footer">
-          <div className="footer-meta">
-            <span>{totalPorts} 个端口</span>
-            <span className="timestamp">
-              {lastUpdated
-                ? `更新于 ${new Date(lastUpdated).toLocaleTimeString('zh-CN', {
-                    hour: '2-digit',
-                    minute: '2-digit',
-                    second: '2-digit',
-                  })}`
-                : ''}
-            </span>
-          </div>
-          <div className="window-actions footer-actions">
-            <button
-              type="button"
-              className="icon-only-btn subtle"
-              onClick={() => setShowSettings((value) => !value)}
-              aria-label="打开扫描设置"
-            >
-              <SlidersHorizontal size={16} strokeWidth={1.8} />
-            </button>
-            <button
-              type="button"
-              className="icon-only-btn subtle"
-              onClick={scanPorts}
-              disabled={loading}
-              aria-label="刷新端口列表"
-            >
-              {loading ? (
-                <LoaderCircle className="spin" size={16} strokeWidth={1.8} />
-              ) : (
-                <RefreshCw size={16} strokeWidth={1.8} />
-              )}
-            </button>
-            <button
-              type="button"
-              className="icon-only-btn subtle"
-              onClick={hideWindow}
-              aria-label="隐藏窗口"
-            >
-              <X size={16} strokeWidth={1.8} />
-            </button>
-          </div>
-        </footer>
+        {!showSettings && (
+          <footer className="footer">
+            <div className="footer-meta">
+              <span>{totalPorts} 个端口</span>
+              <span className="timestamp">
+                {lastUpdated
+                  ? `更新于 ${new Date(lastUpdated).toLocaleTimeString('zh-CN', {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      second: '2-digit',
+                    })}`
+                  : ''}
+              </span>
+            </div>
+            <div className="window-actions footer-actions">
+              <button
+                type="button"
+                className="icon-only-btn subtle"
+                onClick={() => setShowSettings((value) => !value)}
+                aria-label="打开扫描设置"
+              >
+                <SlidersHorizontal size={16} strokeWidth={1.8} />
+              </button>
+              <button
+                type="button"
+                className="icon-only-btn subtle"
+                onClick={scanPorts}
+                disabled={loading}
+                aria-label="刷新端口列表"
+              >
+                {loading ? (
+                  <LoaderCircle className="spin" size={16} strokeWidth={1.8} />
+                ) : (
+                  <RefreshCw size={16} strokeWidth={1.8} />
+                )}
+              </button>
+              <button
+                type="button"
+                className="icon-only-btn subtle"
+                onClick={hideWindow}
+                aria-label="隐藏窗口"
+              >
+                <X size={16} strokeWidth={1.8} />
+              </button>
+            </div>
+          </footer>
+        )}
       </div>
     </div>
   )
