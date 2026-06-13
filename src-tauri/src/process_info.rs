@@ -1,5 +1,5 @@
 //! 进程信息模块
-//! 
+//!
 //! 根据 PID 获取进程的详细信息：
 //! - 进程名称
 //! - 启动命令
@@ -11,6 +11,7 @@ use sysinfo::System;
 
 /// 进程详细信息
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ProcessDetails {
     /// 进程 ID
     pub pid: u32,
@@ -46,21 +47,24 @@ impl ProcessInfo {
         self.refresh();
 
         let process = self.system.process(sysinfo::Pid::from(pid as usize))?;
-        
+
         let name = process.name().to_string();
-        
+
         // 获取启动命令
-        let command = process.cmd()
+        let command = process
+            .cmd()
             .iter()
             .map(|s| s.to_string())
             .collect::<Vec<_>>()
             .join(" ");
 
         // 获取工作目录
-        let cwd = process.cwd()
+        let cwd = process
+            .cwd()
             .map(|p| p.display().to_string())
             .or_else(|| {
-                process.exe()
+                process
+                    .exe()
                     .and_then(|p| p.parent())
                     .map(|p| p.display().to_string())
             })
@@ -117,25 +121,6 @@ impl ProcessInfo {
             "unknown" | "node" | "npm" | "pnpm" | "yarn" | "bun" | "python" | "python3" | "java"
         )
     }
-
-    /// 批量获取进程详情
-    pub fn get_processes_details(&mut self, pids: &[u32]) -> Vec<ProcessDetails> {
-        self.refresh();
-        
-        pids.iter()
-            .filter_map(|&pid| self.get_process_details(pid))
-            .collect()
-    }
-
-    /// 获取所有进程列表
-    pub fn list_all_processes(&self) -> Vec<(u32, String)> {
-        self.system.processes()
-            .iter()
-            .map(|(pid, process)| {
-                (pid.as_u32(), process.name().to_string())
-            })
-            .collect()
-    }
 }
 
 impl Default for ProcessInfo {
@@ -154,26 +139,23 @@ mod tests {
             ProcessInfo::extract_project_name("/Users/dev/projects/my-app", "", ""),
             "my-app"
         );
-        
+
         assert_eq!(
             ProcessInfo::extract_project_name("/home/user/code/vue-project", "", ""),
             "vue-project"
         );
-        
-        assert_eq!(
-            ProcessInfo::extract_project_name("", "", ""),
-            "未识别来源"
-        );
+
+        assert_eq!(ProcessInfo::extract_project_name("", "", ""), "未识别来源");
     }
 
     #[test]
     fn test_get_current_process() {
         let mut info = ProcessInfo::new();
         let current_pid = std::process::id();
-        
+
         let details = info.get_process_details(current_pid);
         assert!(details.is_some());
-        
+
         let details = details.unwrap();
         assert_eq!(details.pid, current_pid);
         assert!(!details.name.is_empty());

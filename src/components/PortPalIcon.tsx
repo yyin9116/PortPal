@@ -1,14 +1,7 @@
-export function PortPalIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="currentColor"
-      xmlns="http://www.w3.org/2000/svg"
-      className={className}
-      aria-hidden="true"
-    >
-      <rect width="24" height="24" rx="6" fill="#10b981" />
-      <path fill="#ffffff" d="M6 2h7.5a7.5 7.5 0 0 1 0 15H10v5H6V2zm4 11h3.5a3.5 3.5 0 0 0 0-7H10v7z" />
-    </svg>
-  )
-}
+export const PortPalIcon = ({ className }: { className?: string }) => (
+  <svg viewBox="0 0 24 24" fill="none" className={className}>
+    <path d="M7 18V6H12.2C14.6 6 16.4 7.8 16.4 10.2C16.4 12.6 14.6 14.4 12.2 14.4H10.4V18H7Z" fill="currentColor" />
+    <circle cx="18" cy="9" r="1.3" fill="currentColor" />
+    <circle cx="18" cy="15" r="1.3" fill="currentColor" />
+  </svg>
+)

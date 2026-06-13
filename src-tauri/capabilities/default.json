@@ -7,7 +7,6 @@
     "core:default",
     "core:window:allow-hide",
     "core:window:allow-show",
-    "core:window:allow-start-dragging",
-    "opener:default"
+    "core:window:allow-start-dragging"
   ]
 }

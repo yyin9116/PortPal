@@ -1,13 +1,13 @@
 //! 进程控制模块
-//! 
+//!
 //! 提供进程终止功能：
 //! - 优雅终止 (SIGTERM)
 //! - 强制终止 (SIGKILL)
 //! - 跨平台支持
 
+use serde::{Deserialize, Serialize};
 use std::process::{Command, Stdio};
-use serde::{Serialize, Deserialize};
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
 /// 进程控制器
 pub struct ProcessController;
@@ -41,7 +41,7 @@ impl ProcessController {
     #[cfg(unix)]
     fn kill_unix(&self, pid: u32) -> KillResult {
         info!("Attempting to kill process {} on Unix", pid);
-        
+
         // 首先尝试优雅终止 (SIGTERM)
         let result = Command::new("kill")
             .arg("-15") // SIGTERM
@@ -80,7 +80,7 @@ impl ProcessController {
     #[cfg(unix)]
     fn kill_unix_force(&self, pid: u32) -> KillResult {
         info!("Force killing process {} with SIGKILL", pid);
-        
+
         let result = Command::new("kill")
             .arg("-9") // SIGKILL
             .arg(pid.to_string())
@@ -122,7 +122,7 @@ impl ProcessController {
     #[cfg(windows)]
     fn kill_windows(&self, pid: u32) -> KillResult {
         info!("Attempting to kill process {} on Windows", pid);
-        
+
         // 使用 taskkill 命令
         let result = Command::new("taskkill")
             .args(["/PID", &pid.to_string(), "/F"]) // /F 强制终止
@@ -159,37 +159,6 @@ impl ProcessController {
             }
         }
     }
-
-    /// 检查进程是否存在
-    pub fn process_exists(&self, pid: u32) -> bool {
-        #[cfg(unix)]
-        {
-            // Unix: 发送信号 0 检查进程是否存在
-            Command::new("kill")
-                .arg("-0")
-                .arg(pid.to_string())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .output()
-                .map(|o| o.status.success())
-                .unwrap_or(false)
-        }
-        #[cfg(windows)]
-        {
-            // Windows: 使用 tasklist 检查
-            Command::new("tasklist")
-                .arg("/FI")
-                .arg(format!("PID eq {}", pid))
-                .stdout(Stdio::piped())
-                .stderr(Stdio::null())
-                .output()
-                .and_then(|o| {
-                    let stdout = String::from_utf8_lossy(&o.stdout);
-                    Ok(stdout.contains(&pid.to_string()))
-                })
-                .unwrap_or(false)
-        }
-    }
 }
 
 impl Default for ProcessController {
@@ -204,16 +173,6 @@ mod tests {
 
     #[test]
     fn test_controller_creation() {
-        let controller = ProcessController::new();
-        // 基本测试，确保可以创建
-        assert!(true);
-    }
-
-    #[test]
-    #[ignore] // 需要实际进程 PID，手动测试
-    fn test_kill_process() {
-        let controller = ProcessController::new();
-        // 这里应该测试实际的杀进程功能
-        // 但需要创建一个测试进程
+        let _controller = ProcessController::new();
     }
 }

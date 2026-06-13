@@ -1,12 +1,12 @@
 //! 端口扫描模块
-//! 
+//!
 //! 跨平台端口扫描实现：
 //! - macOS: 使用 lsof 命令
 //! - Windows: 使用 netstat 命令
 //! - Linux: 使用 /proc/net/tcp 或 netstat
 
 use std::process::Command;
-use tracing::{info, error};
+use tracing::{error, info};
 
 /// 端口条目
 #[derive(Debug, Clone)]
@@ -59,7 +59,7 @@ impl PortScanner {
     #[cfg(target_os = "macos")]
     fn scan_macos(&self) -> Result<Vec<PortEntry>, anyhow::Error> {
         info!("Scanning ports on macOS using lsof");
-        
+
         // 使用 lsof 获取监听端口
         // -iTCP: 只查看 TCP
         // -sTCP:LISTEN: 只查看监听状态
@@ -98,7 +98,7 @@ impl PortScanner {
             // lsof 输出格式:
             // COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME
             // node    123 user 18u IPv4 0x...      0t0  TCP *:3000 (LISTEN)
-            
+
             let _pid_str = parts[1];
             // NAME 字段可能在第 9 列之后，因为前面可能有空格
             let name_field = parts[8..].join(" ");
@@ -130,7 +130,7 @@ impl PortScanner {
         let binding = name_field.replace("(LISTEN)", "");
         let addr_part = binding.trim();
         let parts: Vec<&str> = addr_part.split(':').collect();
-        
+
         if parts.len() != 2 {
             return None;
         }
@@ -153,10 +153,8 @@ impl PortScanner {
     #[cfg(target_os = "windows")]
     fn scan_windows(&self) -> Result<Vec<PortEntry>, anyhow::Error> {
         info!("Scanning ports on Windows using netstat");
-        
-        let output = Command::new("netstat")
-            .args(["-ano"])
-            .output()?;
+
+        let output = Command::new("netstat").args(["-ano"]).output()?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -175,11 +173,11 @@ impl PortScanner {
 
         for line in output.lines() {
             let parts: Vec<&str> = line.split_whitespace().collect();
-            
+
             // netstat -ano 输出格式:
             // Proto Local Address    Foreign Address  State       PID
             // TCP   0.0.0.0:3000     0.0.0.0:0        LISTENING   1234
-            
+
             if parts.len() < 5 {
                 continue;
             }
@@ -198,7 +196,10 @@ impl PortScanner {
             let local_addr = parts[1];
             if let Some((address, port)) = self.parse_address_port(local_addr) {
                 if self.is_in_range(port) {
-                    let pid = parts.last().and_then(|p| p.parse::<u32>().ok()).unwrap_or(0);
+                    let pid = parts
+                        .last()
+                        .and_then(|p| p.parse::<u32>().ok())
+                        .unwrap_or(0);
                     entries.push(PortEntry {
                         port,
                         protocol: proto.to_string(),
@@ -228,9 +229,9 @@ impl PortScanner {
     #[cfg(target_os = "linux")]
     fn scan_proc_net(&self) -> Result<Vec<PortEntry>, anyhow::Error> {
         use std::fs;
-        
+
         let mut entries = Vec::new();
-        
+
         // 读取 TCP 监听端口
         let tcp_path = "/proc/net/tcp";
         if let Ok(content) = fs::read_to_string(tcp_path) {
@@ -252,7 +253,7 @@ impl PortScanner {
                         // 解析 inode 获取 PID
                         let inode = parts[9];
                         let pid = self.find_pid_by_inode(inode).unwrap_or(0);
-                        
+
                         entries.push(PortEntry {
                             port,
                             protocol: "TCP".to_string(),
@@ -276,7 +277,7 @@ impl PortScanner {
 
         // 端口是十六进制
         let port = u16::from_str_radix(parts[1], 16).ok()?;
-        
+
         // IP 地址也是十六进制，需要转换
         let ip_hex = parts[0];
         let ip = if ip_hex == "00000000" {
@@ -327,9 +328,7 @@ impl PortScanner {
 
     #[cfg(target_os = "linux")]
     fn scan_linux_netstat(&self) -> Result<Vec<PortEntry>, anyhow::Error> {
-        let output = Command::new("netstat")
-            .args(["-tlnp"])
-            .output()?;
+        let output = Command::new("netstat").args(["-tlnp"]).output()?;
 
         if !output.status.success() {
             return Err(anyhow::anyhow!("netstat command failed"));
@@ -350,7 +349,9 @@ impl PortScanner {
 
             if let Some((address, port)) = self.parse_address_port(local_addr) {
                 if self.is_in_range(port) {
-                    let pid = pid_comm.split('/').next()
+                    let pid = pid_comm
+                        .split('/')
+                        .next()
                         .and_then(|p| p.parse::<u32>().ok())
                         .unwrap_or(0);
 
@@ -368,12 +369,13 @@ impl PortScanner {
     }
 
     /// 解析地址：端口
+    #[cfg(any(target_os = "windows", target_os = "linux", test))]
     fn parse_address_port(&self, addr_str: &str) -> Option<(String, u16)> {
         // 处理 IPv6: [::]:3000 或 :::3000
         if addr_str.starts_with('[') {
             let end = addr_str.find(']')?;
             let address = addr_str[1..end].to_string();
-            let port = addr_str[end+2..].parse::<u16>().ok()?;
+            let port = addr_str[end + 2..].parse::<u16>().ok()?;
             return Some((address, port));
         }
 
@@ -394,9 +396,9 @@ impl PortScanner {
             return true;
         }
 
-        self.port_ranges.iter().any(|(start, end)| {
-            port >= *start && port <= *end
-        })
+        self.port_ranges
+            .iter()
+            .any(|(start, end)| port >= *start && port <= *end)
     }
 }
 
@@ -414,7 +416,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     fn test_parse_lsof_name_field() {
         let scanner = PortScanner::new();
-        
+
         let result = scanner.parse_lsof_name_field("*:3000 (LISTEN)");
         assert!(result.is_some());
         let entry = result.unwrap();
@@ -425,7 +427,7 @@ mod tests {
     #[test]
     fn test_parse_address_port() {
         let scanner = PortScanner::new();
-        
+
         let result = scanner.parse_address_port("0.0.0.0:3000");
         assert!(result.is_some());
         let (addr, port) = result.unwrap();

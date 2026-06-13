@@ -25,3 +25,4 @@ src-tauri/gen/schemas
 # Logs
 logs
 *.log
+.omx/

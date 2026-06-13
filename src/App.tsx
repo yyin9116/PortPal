@@ -1,94 +1,170 @@
-import { useEffect, useMemo, useState } from 'react'
-import { invoke } from '@tauri-apps/api/core'
-import { listen } from '@tauri-apps/api/event'
-import { getCurrentWindow } from '@tauri-apps/api/window'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
 import {
-  AlertCircle,
-  Activity,
-  ArrowUpRight,
-  ChevronDown,
-  ChevronRight,
-  CircleX,
-  Copy,
-  Database,
-  FolderOpen,
-  Globe,
-  LoaderCircle,
-  Monitor,
-  Moon,
-  Network,
-  Pin,
-  RefreshCw,
   Search,
+  Settings,
+  RefreshCw,
+  Power,
+  Copy,
+  ExternalLink,
+  EyeOff,
+  Database,
+  Globe,
   Server,
-  SlidersHorizontal,
-  Sun,
-    Trash2,
+  Network,
+  Activity,
+  Check,
   X,
+  ChevronLeft,
+  FolderOpen,
+  AlertCircle,
+  Languages,
+  ChevronDown,
+  Monitor,
+  Sun,
+  Moon,
 } from 'lucide-react'
-import './App.css'
 import { PortPalIcon } from './components/PortPalIcon'
+import {
+  hideCurrentWindow,
+  isTauriRuntime,
+  killProcess as killNativeProcess,
+  onScanRequested,
+  openFolder as openNativeFolder,
+  openPortInBrowser,
+  scanPorts as scanNativePorts,
+  startCurrentWindowDrag,
+  type KillResult,
+  type PortInfo,
+  type ScanOptions,
+  type ScanResult,
+} from './services/portpalTauri'
+import {
+  DEFAULT_SCAN_SETTINGS,
+  loadDismissedPorts,
+  loadLocale,
+  loadRefreshInterval,
+  loadScanSettings,
+  loadThemeMode,
+  saveDismissedPorts,
+  saveLocale,
+  saveRefreshInterval,
+  saveScanSettings,
+  saveThemeMode,
+  type DismissedPortKey,
+  type Locale,
+  type ScanSettingsForm,
+  type ThemeMode,
+} from './services/userPreferences'
 
-const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
-
-interface PortInfo {
-  port: number
-  protocol: string
-  address: string
-  pid: number
-  process_name: string
-  command: string
-  work_dir: string
-  project_name: string
-}
-
-interface ScanResult {
-  timestamp: number
-  ports: PortInfo[]
-  errors: string[]
-}
-
-interface KillResult {
-  pid: number
-  success: boolean
-  message: string
-}
-
-interface ScanRange {
-  start: number
-  end: number
-}
-
-interface ScanOptions {
-  include_ranges: ScanRange[]
-  exclude_ports: number[]
-  exclude_processes: string[]
-  allow_processes: string[]
-}
-
-interface ScanSettingsForm {
-  includeRanges: string
-  excludePorts: string
-  excludeProcesses: string
-  allowProcesses: string
-  themeMode: ThemeMode
-}
-
-type ThemeMode = 'system' | 'light' | 'dark'
-type DismissedPortKey = string
-type PortType = 'web' | 'api' | 'db' | 'proxy' | 'mq' | 'serve'
-
-interface PendingKillTarget {
-  pid: number
-  port: number
-  label: string
-}
+type ServiceType = 'web' | 'api' | 'db' | 'proxy' | 'mq' | 'serve'
 
 const UNKNOWN_VALUES = new Set(['', 'unknown', '未识别来源'])
-const SETTINGS_STORAGE_KEY = 'portpal.scan-settings'
-const GROUP_PREFERENCES_STORAGE_KEY = 'portpal.group-preferences'
-const DISMISSED_PORTS_STORAGE_KEY = 'portpal.dismissed-ports'
+
+const translations = {
+  zh: {
+    appTitle: 'PortPal',
+    refresh: '刷新',
+    settings: '设置',
+    close: '关闭',
+    searchPlaceholder: '搜索端口、进程、项目...',
+    emptyState: '未发现运行中的服务。',
+    copyAddress: '复制地址',
+    openInBrowser: '浏览器打开',
+    openFolder: '打开目录',
+    hideFromList: '从列表隐藏',
+    terminateProcess: '终止进程',
+    hideWindow: '隐藏',
+    activeCount: '运行中',
+    hiddenCount: '已隐藏',
+    autoRefreshInterval: '自动刷新间隔',
+    intervalOff: '关闭',
+    intervalSeconds: (value: number) => `${value} 秒`,
+    intervalMinute: '1 分钟',
+    language: '界面语言',
+    languageZh: '中文',
+    languageEn: 'English',
+    theme: '主题模式',
+    themeSystem: '跟随系统',
+    themeLight: '浅色',
+    themeDark: '深色',
+    scanRange: '扫描范围',
+    excludePorts: '排除端口',
+    excludeProcesses: '排除进程',
+    allowProcesses: '白名单进程',
+    scanRangePlaceholder: '示例: 80, 3000-3999, 8080',
+    excludePortsPlaceholder: '示例: 22, 3306, 5432',
+    excludeProcessesPlaceholder: '示例: postgres, Dropbox',
+    allowProcessesPlaceholder: '示例: node, bun, python',
+    clearRules: '清空规则',
+    applyNow: '立即应用',
+    lastUpdated: '上次更新',
+    noTime: '--:--:--',
+    settingsSubtitle: '可手动切换浅色/深色，也可跟随系统',
+    quickOptions: '快捷选项',
+    scanRules: '扫描规则',
+    scanFailedPreview: '扫描失败：当前为浏览器预览，请使用 Tauri 应用运行',
+    killFailedPreview: '终止失败：当前为浏览器预览，请使用 Tauri 应用运行',
+    openFailedPreview: '打开失败：当前为浏览器预览，请使用 Tauri 应用运行',
+    hideFailed: '隐藏窗口失败',
+    dragFailed: '窗口拖动失败',
+    copyFailed: '复制失败',
+    openFailed: '打开失败',
+    killFailed: '终止失败',
+    scanFailed: '扫描失败',
+  },
+  en: {
+    appTitle: 'PortPal',
+    refresh: 'Refresh',
+    settings: 'Settings',
+    close: 'Close',
+    searchPlaceholder: 'Search ports, services, projects...',
+    emptyState: 'No running services found.',
+    copyAddress: 'Copy URL',
+    openInBrowser: 'Open in Browser',
+    openFolder: 'Open Folder',
+    hideFromList: 'Hide from list',
+    terminateProcess: 'Terminate Process',
+    hideWindow: 'Hide',
+    activeCount: 'Active',
+    hiddenCount: 'Hidden',
+    autoRefreshInterval: 'Auto-refresh Interval',
+    intervalOff: 'Off',
+    intervalSeconds: (value: number) => `${value} seconds`,
+    intervalMinute: '1 minute',
+    language: 'Language',
+    languageZh: '中文',
+    languageEn: 'English',
+    theme: 'Theme',
+    themeSystem: 'System',
+    themeLight: 'Light',
+    themeDark: 'Dark',
+    scanRange: 'Scan Range',
+    excludePorts: 'Exclude Ports',
+    excludeProcesses: 'Exclude Processes',
+    allowProcesses: 'Allow Processes',
+    scanRangePlaceholder: 'Example: 80, 3000-3999, 8080',
+    excludePortsPlaceholder: 'Example: 22, 3306, 5432',
+    excludeProcessesPlaceholder: 'Example: postgres, Dropbox',
+    allowProcessesPlaceholder: 'Example: node, bun, python',
+    clearRules: 'Clear Rules',
+    applyNow: 'Apply Now',
+    lastUpdated: 'Last Updated',
+    noTime: '--:--:--',
+    settingsSubtitle: 'Switch manually or follow system theme',
+    quickOptions: 'Quick Options',
+    scanRules: 'Scan Rules',
+    scanFailedPreview: 'Scan failed: running in browser preview, please use the Tauri app',
+    killFailedPreview: 'Terminate failed: running in browser preview, please use the Tauri app',
+    openFailedPreview: 'Open failed: running in browser preview, please use the Tauri app',
+    hideFailed: 'Hide window failed',
+    dragFailed: 'Window drag failed',
+    copyFailed: 'Copy failed',
+    openFailed: 'Open failed',
+    killFailed: 'Terminate failed',
+    scanFailed: 'Scan failed',
+  },
+} as const
 
 function normalizeText(value: string) {
   return value.trim()
@@ -111,10 +187,7 @@ function shortenPath(path: string) {
   if (!normalized) return ''
 
   const segments = normalized.split(/[\\/]/).filter(Boolean)
-  if (segments.length <= 3) {
-    return normalized
-  }
-
+  if (segments.length <= 3) return normalized
   return `.../${segments.slice(-3).join('/')}`
 }
 
@@ -128,62 +201,37 @@ function compactCommand(command: string) {
 }
 
 function getProjectLabel(port: PortInfo) {
-  if (hasMeaningfulValue(port.project_name)) {
-    return port.project_name
-  }
+  if (hasMeaningfulValue(port.project_name)) return port.project_name
 
   const workdirName = getBaseName(port.work_dir)
-  if (workdirName) {
-    return workdirName
-  }
+  if (workdirName) return workdirName
 
-  if (hasMeaningfulValue(port.process_name)) {
-    return port.process_name
-  }
-
-  return `端口 ${port.port}`
+  if (hasMeaningfulValue(port.process_name)) return port.process_name
+  return `Port ${port.port}`
 }
 
 function getProcessLabel(port: PortInfo) {
-  if (hasMeaningfulValue(port.process_name)) {
-    return port.process_name
-  }
+  if (hasMeaningfulValue(port.process_name)) return port.process_name
 
   const commandBase = getBaseName(port.command.split(/\s+/)[0] ?? '')
-  if (commandBase) {
-    return commandBase
-  }
-
-  return '未识别进程'
+  if (commandBase) return commandBase
+  return 'unknown-process'
 }
 
 function getSourceSummary(port: PortInfo) {
   if (hasMeaningfulValue(port.work_dir)) {
-    return `目录 ${shortenPath(port.work_dir)}`
+    return `cwd ${shortenPath(port.work_dir)}`
   }
 
   const commandPreview = compactCommand(port.command)
   if (commandPreview) {
-    return `命令 ${commandPreview}`
+    return `cmd ${commandPreview}`
   }
 
-  return '未能识别启动目录或命令来源'
+  return 'source unavailable'
 }
 
-function getGroupLabel(port: PortInfo) {
-  const project = getProjectLabel(port)
-  return project === `端口 ${port.port}` ? '未归类来源' : project
-}
-
-function getPortTitle(port: PortInfo) {
-  const project = getProjectLabel(port)
-  if (project === `端口 ${port.port}`) {
-    return `端口 ${port.port}`
-  }
-  return project
-}
-
-function getPortType(port: PortInfo) {
+function getPortType(port: PortInfo): ServiceType {
   const haystack = `${port.process_name} ${port.command} ${port.project_name}`.toLowerCase()
 
   if (
@@ -192,20 +240,18 @@ function getPortType(port: PortInfo) {
     ) ||
     [3306, 5432, 6379, 27017, 11211, 8123].includes(port.port)
   ) {
-    return 'db' as PortType
+    return 'db'
   }
 
-  if (
-    ['nginx', 'caddy', 'traefik', 'haproxy', 'gateway', 'proxy'].some((keyword) => haystack.includes(keyword))
-  ) {
-    return 'proxy' as PortType
+  if (['nginx', 'caddy', 'traefik', 'haproxy', 'gateway', 'proxy'].some((keyword) => haystack.includes(keyword))) {
+    return 'proxy'
   }
 
   if (
     ['rabbitmq', 'kafka', 'nats', 'queue', 'mq'].some((keyword) => haystack.includes(keyword)) ||
     [5672, 9092, 4222].includes(port.port)
   ) {
-    return 'mq' as PortType
+    return 'mq'
   }
 
   if (
@@ -213,7 +259,7 @@ function getPortType(port: PortInfo) {
       (keyword) => haystack.includes(keyword),
     )
   ) {
-    return 'api' as PortType
+    return 'api'
   }
 
   if (
@@ -222,53 +268,10 @@ function getPortType(port: PortInfo) {
     ) ||
     [3000, 4173, 5173, 8000, 8080].includes(port.port)
   ) {
-    return 'web' as PortType
+    return 'web'
   }
 
-  return 'serve' as PortType
-}
-
-function getBrowserUrl(port: PortInfo) {
-  return `http://localhost:${port.port}`
-}
-
-function getTypeMeta(type: PortType) {
-  switch (type) {
-    case 'web':
-      return { icon: Globe, tone: 'web' }
-    case 'api':
-      return { icon: Server, tone: 'api' }
-    case 'db':
-      return { icon: Database, tone: 'db' }
-    case 'proxy':
-      return { icon: Network, tone: 'proxy' }
-    case 'mq':
-      return { icon: Activity, tone: 'mq' }
-    default:
-      return { icon: Server, tone: 'serve' }
-  }
-}
-
-function PreviewSiteIcon({ port, type }: { port: PortInfo; type: PortType }) {
-  const [iconError, setIconError] = useState(false)
-  const { icon: FallbackIcon, tone } = getTypeMeta(type)
-
-  if (!iconError && (type === 'web' || type === 'api' || type === 'proxy')) {
-    return (
-      <img
-        className="site-icon-image"
-        src={`${getBrowserUrl(port)}/favicon.ico`}
-        alt=""
-        onError={() => setIconError(true)}
-      />
-    )
-  }
-
-  return (
-    <span className={`site-icon site-icon-${tone}`} aria-hidden="true">
-      <FallbackIcon size={12} strokeWidth={1.8} />
-    </span>
-  )
+  return 'serve'
 }
 
 function parseIntegerList(value: string) {
@@ -314,735 +317,884 @@ function parseRanges(value: string) {
       if (Number.isInteger(port) && port >= 0 && port <= 65535) {
         return [{ start: port, end: port }]
       }
-
       return []
     })
-}
-
-function parseStoredSettings(value: string | null): ScanSettingsForm {
-  if (!value) {
-    return {
-      includeRanges: '',
-      excludePorts: '',
-      excludeProcesses: '',
-      allowProcesses: '',
-      themeMode: 'system',
-    }
-  }
-
-  const parsed = JSON.parse(value) as Partial<ScanSettingsForm>
-  return {
-    includeRanges: parsed.includeRanges ?? '',
-    excludePorts: parsed.excludePorts ?? '',
-    excludeProcesses: parsed.excludeProcesses ?? '',
-    allowProcesses: parsed.allowProcesses ?? '',
-    themeMode: parsed.themeMode ?? 'system',
-  }
-}
-
-function parseStoredGroupPreferences(value: string | null) {
-  if (!value) {
-    return {
-      collapsed: [] as string[],
-      pinned: [] as string[],
-    }
-  }
-
-  const parsed = JSON.parse(value) as Partial<{ collapsed: string[]; pinned: string[] }>
-  return {
-    collapsed: Array.isArray(parsed.collapsed) ? parsed.collapsed : [],
-    pinned: Array.isArray(parsed.pinned) ? parsed.pinned : [],
-  }
 }
 
 function getPortKey(port: PortInfo): DismissedPortKey {
   return `${port.pid}:${port.port}:${normalizeText(port.address) || 'localhost'}`
 }
 
-function App() {
-  const [ports, setPorts] = useState<PortInfo[]>([])
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [lastUpdated, setLastUpdated] = useState<number | null>(null)
-  const [showSettings, setShowSettings] = useState(false)
-  const [settings, setSettings] = useState<ScanSettingsForm>(() => {
-    try {
-      return parseStoredSettings(localStorage.getItem(SETTINGS_STORAGE_KEY))
-    } catch {
-      return parseStoredSettings(null)
-    }
-  })
-  const [collapsedGroups, setCollapsedGroups] = useState<string[]>(() => {
-    try {
-      return parseStoredGroupPreferences(localStorage.getItem(GROUP_PREFERENCES_STORAGE_KEY)).collapsed
-    } catch {
-      return []
-    }
-  })
-  const [pinnedGroups, setPinnedGroups] = useState<string[]>(() => {
-    try {
-      return parseStoredGroupPreferences(localStorage.getItem(GROUP_PREFERENCES_STORAGE_KEY)).pinned
-    } catch {
-      return []
-    }
-  })
-  const [dismissedPorts, setDismissedPorts] = useState<DismissedPortKey[]>(() => {
-    try {
-      const stored = localStorage.getItem(DISMISSED_PORTS_STORAGE_KEY)
-      if (!stored) return []
-      const parsed = JSON.parse(stored)
-      return Array.isArray(parsed) ? parsed : []
-    } catch {
-      return []
-    }
-  })
-  const [pendingKill, setPendingKill] = useState<PendingKillTarget | null>(null)
+function getBrowserUrl(port: PortInfo) {
+  return `http://localhost:${port.port}`
+}
 
-  const scanOptions = useMemo<ScanOptions>(() => ({
-    include_ranges: parseRanges(settings.includeRanges),
-    exclude_ports: parseIntegerList(settings.excludePorts),
-    exclude_processes: parseKeywordList(settings.excludeProcesses),
-    allow_processes: parseKeywordList(settings.allowProcesses),
-  }), [settings])
+function useSystemDarkMode() {
+  const [isDark, setIsDark] = useState(() => window.matchMedia('(prefers-color-scheme: dark)').matches)
+
+  useEffect(() => {
+    const media = window.matchMedia('(prefers-color-scheme: dark)')
+    const handler = (event: MediaQueryListEvent) => setIsDark(event.matches)
+    media.addEventListener('change', handler)
+    setIsDark(media.matches)
+    return () => media.removeEventListener('change', handler)
+  }, [])
+
+  return isDark
+}
+
+function TypeIcon({ type }: { type: ServiceType }) {
+  switch (type) {
+    case 'web':
+      return <Globe className="h-3 w-3" />
+    case 'api':
+      return <Server className="h-3 w-3" />
+    case 'db':
+      return <Database className="h-3 w-3" />
+    case 'proxy':
+      return <Network className="h-3 w-3" />
+    case 'mq':
+      return <Activity className="h-3 w-3" />
+    default:
+      return <Server className="h-3 w-3" />
+  }
+}
+
+function typeColor(type: ServiceType, isDark: boolean) {
+  if (!isDark) {
+    switch (type) {
+      case 'web':
+        return 'text-cyan-700 bg-cyan-100 border-cyan-200'
+      case 'api':
+        return 'text-emerald-700 bg-emerald-100 border-emerald-200'
+      case 'db':
+        return 'text-amber-700 bg-amber-100 border-amber-200'
+      case 'proxy':
+        return 'text-orange-700 bg-orange-100 border-orange-200'
+      case 'mq':
+        return 'text-rose-700 bg-rose-100 border-rose-200'
+      default:
+        return 'text-slate-700 bg-slate-100 border-slate-200'
+    }
+  }
+
+  switch (type) {
+    case 'web':
+      return 'text-cyan-300 bg-cyan-400/10 border-cyan-400/20'
+    case 'api':
+      return 'text-emerald-300 bg-emerald-400/10 border-emerald-400/20'
+    case 'db':
+      return 'text-amber-300 bg-amber-400/10 border-amber-400/20'
+    case 'proxy':
+      return 'text-orange-300 bg-orange-400/10 border-orange-400/20'
+    case 'mq':
+      return 'text-rose-300 bg-rose-400/10 border-rose-400/20'
+    default:
+      return 'text-slate-300 bg-slate-400/10 border-slate-400/20'
+  }
+}
+
+interface ServiceItemProps {
+  port: PortInfo
+  copied: boolean
+  isDark: boolean
+  locale: Locale
+  onCopy: () => void
+  onOpen: () => void
+  onOpenFolder: () => void
+  onHide: () => void
+  onTerminate: () => void
+}
+
+function ServiceItem({
+  port,
+  copied,
+  isDark,
+  locale,
+  onCopy,
+  onOpen,
+  onOpenFolder,
+  onHide,
+  onTerminate,
+}: ServiceItemProps) {
+  const t = translations[locale]
+  const type = getPortType(port)
+  const processLabel = getProcessLabel(port)
+  const sourceSummary = getSourceSummary(port)
+  const isWebLike = type === 'web' || type === 'api' || type === 'proxy'
+
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: -10, scale: 0.95 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.95, transition: { duration: 0.15 } }}
+      className={`group flex cursor-default items-center justify-between rounded-md px-2 py-1.5 transition-colors ${
+        isDark ? 'hover:bg-white/10' : 'hover:bg-slate-900/6'
+      }`}
+    >
+      <div className="flex min-w-0 flex-1 items-center gap-2.5 overflow-hidden">
+        <div className="flex w-[4.5rem] shrink-0 items-center gap-2">
+          <div className={`h-1.5 w-1.5 rounded-full shadow-[0_0_8px_rgba(52,211,153,0.4)] ${isDark ? 'bg-emerald-400' : 'bg-emerald-500'}`} />
+          <span className={`font-mono text-xs font-medium ${isDark ? 'text-slate-200' : 'text-slate-700'}`}>:{port.port}</span>
+        </div>
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <span className={`truncate text-xs ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>{processLabel}</span>
+          <div className={`shrink-0 rounded border px-1.5 py-0.5 text-[9px] font-medium ${typeColor(type, isDark)} flex items-center gap-1`}>
+            <TypeIcon type={type} />
+            <span className="uppercase tracking-wider">{type}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="ml-2 flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+        <button
+          onClick={onCopy}
+          className={`rounded p-1 transition-colors ${isDark ? 'text-slate-400 hover:bg-white/10 hover:text-white' : 'text-slate-500 hover:bg-slate-900/10 hover:text-slate-900'}`}
+          title={t.copyAddress}
+        >
+          {copied ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+        </button>
+        {isWebLike && (
+          <button
+            onClick={onOpen}
+            className={`flex rounded p-1 transition-colors ${isDark ? 'text-slate-400 hover:bg-white/10 hover:text-white' : 'text-slate-500 hover:bg-slate-900/10 hover:text-slate-900'}`}
+            title={t.openInBrowser}
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+          </button>
+        )}
+        <button
+          onClick={onOpenFolder}
+          className={`rounded p-1 transition-colors ${isDark ? 'text-slate-400 hover:bg-white/10 hover:text-white' : 'text-slate-500 hover:bg-slate-900/10 hover:text-slate-900'}`}
+          title={`${t.openFolder} · ${sourceSummary}`}
+          disabled={!hasMeaningfulValue(port.work_dir)}
+        >
+          <FolderOpen className="h-3.5 w-3.5" />
+        </button>
+        <button
+          onClick={onHide}
+          className={`rounded p-1 transition-colors ${isDark ? 'text-slate-400 hover:bg-white/10 hover:text-white' : 'text-slate-500 hover:bg-slate-900/10 hover:text-slate-900'}`}
+          title={t.hideFromList}
+        >
+          <EyeOff className="h-3.5 w-3.5" />
+        </button>
+        <button
+          onClick={onTerminate}
+          className={`rounded p-1 transition-colors ${isDark ? 'text-slate-400 hover:bg-red-500/20 hover:text-red-400' : 'text-slate-500 hover:bg-red-500/10 hover:text-red-600'}`}
+          title={t.terminateProcess}
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </motion.div>
+  )
+}
+
+interface StyledSelectOption {
+  value: string | number
+  label: string
+}
+
+interface StyledSelectProps {
+  value: string | number
+  options: StyledSelectOption[]
+  onChange: (value: string) => void
+  isDark: boolean
+}
+
+function StyledSelect({ value, options, onChange, isDark }: StyledSelectProps) {
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement | null>(null)
+  const selected = options.find((option) => `${option.value}` === `${value}`) ?? options[0]
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
+        setOpen(false)
+      }
+    }
+    window.addEventListener('mousedown', handleClickOutside)
+    return () => window.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  return (
+    <div className="relative" ref={rootRef}>
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        className={`w-full rounded-lg border px-2.5 py-1.5 pr-8 text-xs shadow-sm transition-colors focus:outline-none ${
+          isDark
+            ? 'border-white/16 bg-[#1b2028] text-slate-100 hover:bg-[#202733] focus:border-emerald-500/70'
+            : 'border-slate-300 bg-white text-slate-800 hover:bg-slate-50 focus:border-emerald-500/70'
+        }`}
+      >
+        <span className="block truncate text-left">{selected.label}</span>
+      </button>
+      <ChevronDown
+        className={`pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 transition-transform ${
+          open ? 'rotate-180' : 'rotate-0'
+        } ${
+          isDark ? 'text-slate-400' : 'text-slate-500'
+        }`}
+      />
+
+      {open && (
+        <div
+          className={`absolute z-40 mt-1 w-full overflow-hidden rounded-lg border shadow-xl ${
+            isDark ? 'border-white/16 bg-[#242932]' : 'border-slate-300 bg-white'
+          }`}
+        >
+          {options.map((option) => {
+            const active = `${option.value}` === `${value}`
+            return (
+              <button
+                type="button"
+                key={`${option.value}`}
+                onClick={() => {
+                  onChange(`${option.value}`)
+                  setOpen(false)
+                }}
+                className={`block w-full px-2.5 py-1.5 text-left text-xs transition-colors ${
+                  active
+                    ? isDark
+                      ? 'bg-emerald-500/20 text-emerald-300'
+                      : 'bg-emerald-100 text-emerald-700'
+                    : isDark
+                      ? 'text-slate-200 hover:bg-white/10'
+                      : 'text-slate-700 hover:bg-slate-100'
+                }`}
+              >
+                {option.label}
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+interface StyledButtonProps {
+  kind: 'primary' | 'secondary'
+  isDark: boolean
+  onClick: () => void
+  children: ReactNode
+}
+
+function StyledButton({ kind, isDark, onClick, children }: StyledButtonProps) {
+  if (kind === 'primary') {
+    return (
+      <button
+        onClick={onClick}
+        className={`rounded-md px-2.5 py-1.5 text-xs font-semibold tracking-wide text-white transition-colors ${
+          isDark ? 'bg-emerald-500 hover:bg-emerald-400' : 'bg-emerald-600 hover:bg-emerald-500'
+        }`}
+      >
+        {children}
+      </button>
+    )
+  }
+
+  return (
+    <button
+      onClick={onClick}
+      className={`rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors ${
+        isDark
+          ? 'border-white/16 bg-black/30 text-slate-200 hover:bg-white/10'
+          : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'
+      }`}
+    >
+      {children}
+    </button>
+  )
+}
+
+export default function App() {
+  const [ports, setPorts] = useState<PortInfo[]>([])
+  const [searchQuery, setSearchQuery] = useState('')
+  const [copiedKey, setCopiedKey] = useState<string | null>(null)
+  const [dismissedPorts, setDismissedPorts] = useState<DismissedPortKey[]>(loadDismissedPorts)
+  const [error, setError] = useState<string | null>(null)
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false)
+  const [locale, setLocale] = useState<Locale>(loadLocale)
+  const systemDark = useSystemDarkMode()
+  const [themeMode, setThemeMode] = useState<ThemeMode>(loadThemeMode)
+  const isDark = themeMode === 'system' ? systemDark : themeMode === 'dark'
+
+  const t = translations[locale]
+  const textAreaClass = isDark
+    ? 'mt-1 w-full resize-none rounded-md border border-white/16 bg-black/35 px-2 py-1.5 text-xs text-slate-100 transition-colors placeholder:text-slate-500 focus:border-emerald-500/70 focus:outline-none'
+    : 'mt-1 w-full resize-none rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-800 transition-colors placeholder:text-slate-400 focus:border-emerald-500/70 focus:outline-none'
+
+  const [refreshInterval, setRefreshInterval] = useState<number>(loadRefreshInterval)
+  const [isRefreshing, setIsRefreshing] = useState(false)
+  const [lastRefreshed, setLastRefreshed] = useState<number | null>(null)
+  const [settings, setSettings] = useState<ScanSettingsForm>(loadScanSettings)
+
+  const scanOptions = useMemo<ScanOptions>(
+    () => ({
+      include_ranges: parseRanges(settings.includeRanges),
+      exclude_ports: parseIntegerList(settings.excludePorts),
+      exclude_processes: parseKeywordList(settings.excludeProcesses),
+      allow_processes: parseKeywordList(settings.allowProcesses),
+    }),
+    [settings],
+  )
 
   const visiblePorts = useMemo(
     () => ports.filter((port) => !dismissedPorts.includes(getPortKey(port))),
     [dismissedPorts, ports],
   )
 
-  const groupedPorts = useMemo(() => {
-    const groups = new Map<string, PortInfo[]>()
+  const filteredServices = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase()
+    if (!query) return visiblePorts
+    return visiblePorts.filter((port) => {
+      return (
+        getProjectLabel(port).toLowerCase().includes(query) ||
+        getProcessLabel(port).toLowerCase().includes(query) ||
+        getSourceSummary(port).toLowerCase().includes(query) ||
+        String(port.port).includes(query)
+      )
+    })
+  }, [searchQuery, visiblePorts])
 
-    visiblePorts.forEach((port) => {
-      const key = getGroupLabel(port)
-      const current = groups.get(key) ?? []
-      current.push(port)
-      groups.set(key, current)
+  const groupedServices = useMemo(() => {
+    const groups = new Map<string, PortInfo[]>()
+    filteredServices.forEach((port) => {
+      const project = getProjectLabel(port)
+      const existing = groups.get(project) ?? []
+      existing.push(port)
+      groups.set(project, existing)
     })
 
     return [...groups.entries()]
-      .map(([groupName, groupPorts]) => [
-        groupName,
-        [...groupPorts].sort((a, b) => a.port - b.port),
-      ] as const)
-      .sort((a, b) => {
-        const aPinned = pinnedGroups.includes(a[0])
-        const bPinned = pinnedGroups.includes(b[0])
-        if (aPinned !== bPinned) return aPinned ? -1 : 1
-        if (a[0] === '未归类来源') return 1
-        if (b[0] === '未归类来源') return -1
-        if (b[1].length !== a[1].length) return b[1].length - a[1].length
-        return a[0].localeCompare(b[0], 'zh-CN')
-      })
-  }, [pinnedGroups, visiblePorts])
+      .map(([project, items]) => [project, [...items].sort((a, b) => a.port - b.port)] as const)
+      .sort((a, b) => a[0].localeCompare(b[0], 'zh-CN'))
+  }, [filteredServices])
 
-  const totalPorts = visiblePorts.length
-
-  const scanPorts = async () => {
-    if (!isTauri) {
-      setLoading(false)
-      setError('扫描失败：当前为浏览器预览，请使用 Tauri 应用运行')
+  const scanPorts = useCallback(async () => {
+    if (!isTauriRuntime) {
+      setError(t.scanFailedPreview)
       return
     }
 
-    setLoading(true)
+    setIsRefreshing(true)
     setError(null)
     try {
-      const result: ScanResult = await invoke('scan_ports', {
-        scanOptions,
-      })
+      const result: ScanResult = await scanNativePorts(scanOptions)
       setPorts(result.ports)
-      setLastUpdated(result.timestamp)
+      setLastRefreshed(result.timestamp)
     } catch (e) {
-      setError(`扫描失败：${e}`)
+      setError(`${t.scanFailed}: ${e}`)
     } finally {
-      setLoading(false)
+      setIsRefreshing(false)
     }
-  }
+  }, [scanOptions, t.scanFailed, t.scanFailedPreview])
 
-  const killProcess = async (pid: number) => {
-    if (!isTauri) {
-      setError('终止失败：当前为浏览器预览，请使用 Tauri 应用运行')
-      return
-    }
-
-    try {
-      const result: KillResult = await invoke('kill_process', { pid })
-      if (result.success) {
-        await scanPorts()
-      } else {
-        setError(`终止失败：${result.message}`)
+  const killProcess = useCallback(
+    async (pid: number) => {
+      if (!isTauriRuntime) {
+        setError(t.killFailedPreview)
+        return
       }
-    } catch (e) {
-      setError(`终止失败：${e}`)
-    }
-  }
+      try {
+        const result: KillResult = await killNativeProcess(pid)
+        if (result.success) {
+          await scanPorts()
+        } else {
+          setError(`${t.killFailed}: ${result.message}`)
+        }
+      } catch (e) {
+        setError(`${t.killFailed}: ${e}`)
+      }
+    },
+    [scanPorts, t.killFailed, t.killFailedPreview],
+  )
 
-  const dismissPort = (port: PortInfo) => {
-    const portKey = getPortKey(port)
-    setDismissedPorts((current) => (current.includes(portKey) ? current : [...current, portKey]))
-  }
+  const openInBrowser = useCallback(
+    async (port: number) => {
+      if (!isTauriRuntime) {
+        window.open(`http://localhost:${port}`, '_blank')
+        return
+      }
+      try {
+        await openPortInBrowser(port)
+      } catch (e) {
+        setError(`${t.openFailed}: ${e}`)
+      }
+    },
+    [t.openFailed],
+  )
 
-  const openInBrowser = async (port: number) => {
-    if (!isTauri) {
-      window.open(`http://localhost:${port}`, '_blank')
-      return
-    }
+  const openFolder = useCallback(
+    async (path: string) => {
+      if (!isTauriRuntime) {
+        setError(t.openFailedPreview)
+        return
+      }
+      if (!hasMeaningfulValue(path)) return
+      try {
+        await openNativeFolder(path)
+      } catch (e) {
+        setError(`${t.openFailed}: ${e}`)
+      }
+    },
+    [t.openFailed, t.openFailedPreview],
+  )
 
+  const hideWindow = useCallback(async () => {
+    if (!isTauriRuntime) return
     try {
-      await invoke('open_in_browser', { port })
+      await hideCurrentWindow()
     } catch (e) {
-      setError(`打开失败：${e}`)
+      setError(`${t.hideFailed}: ${e}`)
     }
-  }
+  }, [t.hideFailed])
 
-  const copyAddress = async (port: PortInfo) => {
+  const startDragging = useCallback(async () => {
+    if (!isTauriRuntime) return
     try {
-      await navigator.clipboard.writeText(getBrowserUrl(port))
+      await startCurrentWindowDrag()
     } catch (e) {
-      setError(`复制失败：${e}`)
+      setError(`${t.dragFailed}: ${e}`)
     }
-  }
+  }, [t.dragFailed])
 
-  const openFolder = async (path: string) => {
-    if (!isTauri) {
-      setError('打开失败：当前为浏览器预览，请使用 Tauri 应用运行')
-      return
-    }
+  const handleCopy = useCallback(
+    async (port: PortInfo) => {
+      try {
+        await navigator.clipboard.writeText(getBrowserUrl(port))
+        const key = getPortKey(port)
+        setCopiedKey(key)
+        setTimeout(() => {
+          setCopiedKey((current) => (current === key ? null : current))
+        }, 2000)
+      } catch (e) {
+        setError(`${t.copyFailed}: ${e}`)
+      }
+    },
+    [t.copyFailed],
+  )
 
-    try {
-      await invoke('open_folder', { path })
-    } catch (e) {
-      setError(`打开失败：${e}`)
-    }
-  }
-
-
-  const hideWindow = async () => {
-    if (!isTauri) {
-      return
-    }
-
-    try {
-      await getCurrentWindow().hide()
-    } catch (e) {
-      setError(`隐藏窗口失败：${e}`)
-    }
-  }
-
-  const startDragging = async () => {
-    if (!isTauri) {
-      return
-    }
-
-    try {
-      await getCurrentWindow().startDragging()
-    } catch (e) {
-      setError(`拖动窗口失败：${e}`)
-    }
-  }
+  const handleHide = useCallback((port: PortInfo) => {
+    const key = getPortKey(port)
+    setDismissedPorts((current) => (current.includes(key) ? current : [...current, key]))
+  }, [])
 
   useEffect(() => {
-    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings))
+    saveScanSettings(settings)
   }, [settings])
 
   useEffect(() => {
-    localStorage.setItem(
-      GROUP_PREFERENCES_STORAGE_KEY,
-      JSON.stringify({
-        collapsed: collapsedGroups,
-        pinned: pinnedGroups,
-      }),
-    )
-  }, [collapsedGroups, pinnedGroups])
-
-  useEffect(() => {
-    localStorage.setItem(DISMISSED_PORTS_STORAGE_KEY, JSON.stringify(dismissedPorts))
+    saveDismissedPorts(dismissedPorts)
   }, [dismissedPorts])
 
   useEffect(() => {
-    const root = document.documentElement
-    root.dataset.theme = settings.themeMode
-  }, [settings.themeMode])
+    saveRefreshInterval(refreshInterval)
+  }, [refreshInterval])
 
   useEffect(() => {
-    setCollapsedGroups((current) => current.filter((groupName) => groupedPorts.some(([name]) => name === groupName)))
-    setPinnedGroups((current) => current.filter((groupName) => groupedPorts.some(([name]) => name === groupName)))
-  }, [groupedPorts])
+    saveLocale(locale)
+  }, [locale])
 
   useEffect(() => {
-    if (!isTauri) {
-      return
-    }
+    saveThemeMode(themeMode)
+  }, [themeMode])
 
-    scanPorts()
-
-    const unlisten = listen('portpal-scan', () => {
-      scanPorts()
+  useEffect(() => {
+    if (!isTauriRuntime) return
+    void scanPorts()
+    const unlistenPromise = onScanRequested(() => {
+      void scanPorts()
     })
-
     return () => {
-      unlisten.then((f) => f())
+      void unlistenPromise.then((unlisten) => unlisten())
     }
-  }, [])
+  }, [scanPorts])
 
   useEffect(() => {
-    if (!isTauri) {
-      return
-    }
+    if (!isTauriRuntime || refreshInterval <= 0) return
+    const id = window.setInterval(() => {
+      void scanPorts()
+    }, refreshInterval * 1000)
+    return () => window.clearInterval(id)
+  }, [refreshInterval, scanPorts])
 
+  useEffect(() => {
+    if (!isTauriRuntime) return
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        void getCurrentWindow().hide()
+        void hideWindow()
       }
     }
-
     window.addEventListener('keydown', handleKeyDown)
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [])
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [hideWindow])
 
-  const toggleGroupCollapsed = (groupName: string) => {
-    setCollapsedGroups((current) =>
-      current.includes(groupName)
-        ? current.filter((item) => item !== groupName)
-        : [...current, groupName],
-    )
-  }
+  const intervalOptions = useMemo(
+    () => [
+      { value: 0, label: t.intervalOff },
+      { value: 5, label: t.intervalSeconds(5) },
+      { value: 10, label: t.intervalSeconds(10) },
+      { value: 30, label: t.intervalSeconds(30) },
+      { value: 60, label: t.intervalMinute },
+    ],
+    [t],
+  )
 
-  const toggleGroupPinned = (groupName: string) => {
-    setPinnedGroups((current) =>
-      current.includes(groupName)
-        ? current.filter((item) => item !== groupName)
-        : [groupName, ...current],
-    )
-  }
+  const localeOptions = useMemo(
+    () => [
+      { value: 'zh', label: t.languageZh },
+      { value: 'en', label: t.languageEn },
+    ],
+    [t.languageEn, t.languageZh],
+  )
+
+  const themeOptions = useMemo(
+    () => [
+      { value: 'system', label: t.themeSystem },
+      { value: 'light', label: t.themeLight },
+      { value: 'dark', label: t.themeDark },
+    ],
+    [t.themeDark, t.themeLight, t.themeSystem],
+  )
 
   return (
-    <div className="app-shell">
-      <div className="app-container">
-        {pendingKill && (
-          <div className="confirm-overlay" onClick={() => setPendingKill(null)}>
-            <div
-              className="confirm-dialog"
-              onClick={(event) => event.stopPropagation()}
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="kill-confirm-title"
+    <div className="h-screen w-screen overflow-hidden rounded-2xl">
+      <div
+        className={`flex h-full w-full flex-col overflow-hidden border shadow-2xl ${
+          isDark
+            ? 'border-white/10 bg-[#181b20] text-slate-200'
+            : 'border-slate-200 bg-white text-slate-800'
+        }`}
+      >
+        <div
+          data-tauri-drag-region
+          onMouseDown={(event) => {
+            if (event.button === 0) {
+              void startDragging()
+            }
+          }}
+          className={`h-7 shrink-0 cursor-grab active:cursor-grabbing ${isDark ? 'bg-white/6' : 'bg-slate-100/90'}`}
+        >
+          <div className={`mx-auto mt-2 h-1 w-14 rounded-full ${isDark ? 'bg-white/20' : 'bg-slate-300/80'}`} />
+        </div>
+        <div
+          className={`flex items-center justify-between border-b px-3 py-2.5 ${
+            isDark ? 'border-white/10 bg-white/5' : 'border-slate-200/80 bg-slate-50/85'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            <div className="flex h-5 w-5 items-center justify-center rounded-md bg-emerald-500">
+              <PortPalIcon className="h-3.5 w-3.5 text-white" />
+            </div>
+            <span className={`text-sm font-semibold tracking-tight ${isDark ? 'text-white' : 'text-slate-900'}`}>{t.appTitle}</span>
+          </div>
+          <div className="flex items-center gap-0.5">
+            <button
+              onClick={() => void scanPorts()}
+              className={`rounded-md p-1 transition-colors ${
+                isDark ? 'text-slate-400 hover:bg-white/10 hover:text-white' : 'text-slate-500 hover:bg-slate-900/10 hover:text-slate-900'
+              }`}
+              title={t.refresh}
             >
-              <div className="confirm-copy">
-                <strong id="kill-confirm-title">终止服务并释放端口</strong>
-                <p>
-                  即将终止 <span>{pendingKill.label}</span>，并释放 <span>{pendingKill.port}</span> 端口。
-                </p>
-              </div>
-              <div className="confirm-actions">
-                <button type="button" className="action-link" onClick={() => setPendingKill(null)}>
-                  取消
-                </button>
-                <button
-                  type="button"
-                  className="action-link danger"
-                  onClick={async () => {
-                    const target = pendingKill
-                    setPendingKill(null)
-                    await killProcess(target.pid)
-                  }}
-                >
-                  确认终止
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        <header className="header">
-          <div
-            className="window-bar"
-            data-tauri-drag-region
-            onMouseDown={(event) => {
-              if (event.button === 0) {
-                void startDragging()
-              }
-            }}
-          >
-            <div className="window-bar-spacer" />
-            <div className="drag-indicator" data-tauri-drag-region>
-              <span />
-            </div>
-            <div className="window-bar-spacer" />
-          </div>
-
-          <div className="title-group">
-            <div className="title-row compact">
-              <div className="brand-mark" aria-hidden="true">
-                <PortPalIcon className="brand-logo" />
-              </div>
-              <div className="title-copy">
-                <h1 className="title">PortPal</h1>
-                <p className="subtitle">
-                  来源分组视图
-                </p>
-              </div>
-              <span className="summary-pill muted">
-                <Search size={16} strokeWidth={1.8} />
-                {scanOptions.include_ranges.length > 0 ? `${scanOptions.include_ranges.length} 段范围` : '全端口'}
-              </span>
-            </div>
-            <div className="header-meta">
-              <span>{loading ? '正在扫描本地端口' : `当前发现 ${totalPorts} 个监听端口`}</span>
-              <span className="separator">·</span>
-              <span>{groupedPorts.length} 个来源分组</span>
-            </div>
-          </div>
-        </header>
-
-        <AnimatePresence>
-          {showSettings && (
-            <motion.section
-              className="settings-panel full"
-              role="region"
-              aria-label="扫描设置"
-              initial={{ opacity: 0, y: 8, scale: 0.98 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 8, scale: 0.98 }}
-              transition={{ duration: 0.2, ease: 'easeOut' }}
+              <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin text-emerald-500' : ''}`} />
+            </button>
+            <button
+              onClick={() => setIsSettingsOpen((value) => !value)}
+              className={`rounded-md p-1 transition-colors ${
+                isSettingsOpen
+                  ? isDark
+                    ? 'bg-white/10 text-white'
+                    : 'bg-slate-900/10 text-slate-900'
+                  : isDark
+                    ? 'text-slate-400 hover:bg-white/10 hover:text-white'
+                    : 'text-slate-500 hover:bg-slate-900/10 hover:text-slate-900'
+              }`}
+              title={t.settings}
             >
-            <div className="settings-header sticky">
-              <div className="settings-title">
-                <strong>扫描设置</strong>
-                <span>留空表示不限制</span>
-              </div>
-              <button
-                type="button"
-                className="icon-only-btn subtle"
-                onClick={() => setShowSettings(false)}
-                aria-label="关闭扫描设置"
-              >
-                <X size={16} strokeWidth={1.8} />
-              </button>
-            </div>
-
-            <div className="settings-section">
-              <div className="settings-section-title">界面主题</div>
-              <div className="theme-switcher" role="radiogroup" aria-label="界面主题">
-                {([
-                  ['system', '跟随系统', Monitor],
-                  ['light', '浅色', Sun],
-                  ['dark', '深色', Moon],
-                ] as const).map(([mode, label, Icon]) => (
-                  <button
-                    key={mode}
-                    type="button"
-                    className={`theme-option${settings.themeMode === mode ? ' active' : ''}`}
-                    onClick={() =>
-                      setSettings((current) => ({
-                        ...current,
-                        themeMode: mode,
-                      }))
-                    }
-                    aria-pressed={settings.themeMode === mode}
-                  >
-                    <Icon size={16} strokeWidth={1.8} />
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="settings-section">
-              <div className="settings-section-title">扫描规则</div>
-              <div className="settings-grid">
-                <label className="settings-field">
-                  <span>扫描范围</span>
-                  <textarea
-                    value={settings.includeRanges}
-                    onChange={(event) =>
-                      setSettings((current) => ({
-                        ...current,
-                        includeRanges: event.target.value,
-                      }))
-                    }
-                    placeholder={'示例: 80, 3000-3999, 8080'}
-                    rows={2}
-                  />
-                </label>
-                <label className="settings-field">
-                  <span>排除端口</span>
-                  <textarea
-                    value={settings.excludePorts}
-                    onChange={(event) =>
-                      setSettings((current) => ({
-                        ...current,
-                        excludePorts: event.target.value,
-                      }))
-                    }
-                    placeholder={'示例: 22, 3306, 5432'}
-                    rows={2}
-                  />
-                </label>
-                <label className="settings-field">
-                  <span>排除进程</span>
-                  <textarea
-                    value={settings.excludeProcesses}
-                    onChange={(event) =>
-                      setSettings((current) => ({
-                        ...current,
-                        excludeProcesses: event.target.value,
-                      }))
-                    }
-                    placeholder={'示例: postgres, Dropbox, ControlCenter'}
-                    rows={2}
-                  />
-                </label>
-                <label className="settings-field">
-                  <span>白名单进程</span>
-                  <textarea
-                    value={settings.allowProcesses}
-                    onChange={(event) =>
-                      setSettings((current) => ({
-                        ...current,
-                        allowProcesses: event.target.value,
-                      }))
-                    }
-                    placeholder={'示例: node, bun, python, java'}
-                    rows={2}
-                  />
-                </label>
-              </div>
-            </div>
-
-            <div className="settings-actions">
-              <button
-                type="button"
-                className="action-link"
-                onClick={() => {
-                  setSettings({
-                    includeRanges: '',
-                    excludePorts: '',
-                    excludeProcesses: '',
-                    allowProcesses: '',
-                    themeMode: settings.themeMode,
-                  })
-                }}
-              >
-                清空规则
-              </button>
-              <button
-                type="button"
-                className="action-link primary"
-                onClick={() => {
-                  void scanPorts()
-                  setShowSettings(false)
-                }}
-              >
-                立即应用
-              </button>
-            </div>
-            </motion.section>
-          )}
-        </AnimatePresence>
+              <Settings className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
 
         {error && (
-          <div className="error-banner">
-            <div className="error-content">
-              <AlertCircle size={16} strokeWidth={1.8} />
-              <span>{error}</span>
+          <div
+            className={`flex items-center justify-between gap-2 border-b px-3 py-2 text-[11px] ${
+              isDark
+                ? 'border-red-400/20 bg-red-500/10 text-red-200'
+                : 'border-red-200 bg-red-50 text-red-700'
+            }`}
+          >
+            <div className="flex min-w-0 items-center gap-1.5">
+              <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">{error}</span>
             </div>
             <button
-              className="icon-only-btn"
               onClick={() => setError(null)}
-              aria-label="关闭错误提示"
+              className={`rounded p-1 transition-colors ${
+                isDark ? 'hover:bg-red-500/20 hover:text-white' : 'hover:bg-red-100 hover:text-red-800'
+              }`}
+              title={t.close}
             >
-              <X size={16} strokeWidth={1.8} />
+              <X className="h-3.5 w-3.5" />
             </button>
           </div>
         )}
 
-        {!showSettings && (
-          <div className="port-list">
-            {totalPorts === 0 ? (
-              <div className="empty-state">
-                <div className="empty-icon" aria-hidden="true">
-                  <Search size={20} strokeWidth={1.8} />
-                </div>
-                <p>未发现监听的开发端口</p>
-                <p className="hint">如果本地服务已启动，可点击右上角重新扫描</p>
+        {isSettingsOpen ? (
+          <div className={`flex-1 overflow-y-auto p-4 ${isDark ? 'bg-black/10' : 'bg-slate-50/70'}`}>
+            <div className="mb-3 flex items-center gap-2">
+              <button
+                onClick={() => setIsSettingsOpen(false)}
+                className={`-ml-1 rounded p-1 transition-colors ${
+                  isDark ? 'text-slate-400 hover:bg-white/10 hover:text-white' : 'text-slate-500 hover:bg-slate-900/10 hover:text-slate-900'
+                }`}
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+              <h3 className={`text-xs font-semibold uppercase tracking-wider ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>
+                {t.settings}
+              </h3>
+            </div>
+
+            <p className={`mb-4 text-[11px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{t.settingsSubtitle}</p>
+
+            <div
+              className={`mb-3 rounded-lg border p-3 ${
+                isDark ? 'border-white/10 bg-black/20' : 'border-slate-200 bg-white/80'
+              }`}
+            >
+              <div className={`mb-2 text-[11px] font-semibold uppercase tracking-wider ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>
+                {t.quickOptions}
               </div>
-            ) : (
-              groupedPorts.map(([groupName, groupPorts]) => (
-                <section key={groupName} className="port-group">
-                  <div className="group-header">
-                    <button
-                      type="button"
-                      className="group-toggle"
-                      onClick={() => toggleGroupCollapsed(groupName)}
-                      aria-expanded={!collapsedGroups.includes(groupName)}
-                      aria-label={`${collapsedGroups.includes(groupName) ? '展开' : '折叠'} ${groupName}`}
-                    >
-                      {collapsedGroups.includes(groupName) ? (
-                        <ChevronRight size={16} strokeWidth={1.8} />
-                      ) : (
-                        <ChevronDown size={16} strokeWidth={1.8} />
-                      )}
-                      <span className="group-title">{groupName}</span>
-                    </button>
-                    <div className="group-meta">
-                      <span className="group-count">{groupPorts.length} 个端口</span>
-                      <button
-                        type="button"
-                        className={`icon-only-btn subtle group-pin${pinnedGroups.includes(groupName) ? ' active' : ''}`}
-                        onClick={() => toggleGroupPinned(groupName)}
-                        aria-label={`${pinnedGroups.includes(groupName) ? '取消置顶' : '置顶'} ${groupName}`}
-                        title={pinnedGroups.includes(groupName) ? '取消置顶' : '置顶'}
-                      >
-                        <Pin size={16} strokeWidth={1.8} />
-                      </button>
+              <div className="grid grid-cols-3 gap-2">
+                <label className={`text-[11px] ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
+                  <span className="mb-1 inline-flex items-center gap-1">
+                    <RefreshCw className="h-3 w-3" />
+                    {t.autoRefreshInterval}
+                  </span>
+                  <StyledSelect
+                    value={refreshInterval}
+                    options={intervalOptions}
+                    isDark={isDark}
+                    onChange={(value) => setRefreshInterval(Number(value))}
+                  />
+                </label>
+
+                <label className={`text-[11px] ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
+                  <span className="mb-1 inline-flex items-center gap-1">
+                    <Monitor className="h-3 w-3" />
+                    {t.theme}
+                  </span>
+                  <StyledSelect
+                    value={themeMode}
+                    options={themeOptions}
+                    isDark={isDark}
+                    onChange={(value) => setThemeMode(value as ThemeMode)}
+                  />
+                </label>
+
+                <label className={`text-[11px] ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
+                  <span className="mb-1 inline-flex items-center gap-1">
+                    <Languages className="h-3 w-3" />
+                    {t.language}
+                  </span>
+                  <StyledSelect
+                    value={locale}
+                    options={localeOptions}
+                    isDark={isDark}
+                    onChange={(value) => setLocale(value as Locale)}
+                  />
+                </label>
+              </div>
+              <div className={`mt-2 inline-flex items-center gap-2 text-[10px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                {themeMode === 'system' ? (
+                  <Monitor className="h-3 w-3" />
+                ) : themeMode === 'light' ? (
+                  <Sun className="h-3 w-3" />
+                ) : (
+                  <Moon className="h-3 w-3" />
+                )}
+                <span>
+                  {themeMode === 'system'
+                    ? t.themeSystem
+                    : themeMode === 'light'
+                      ? t.themeLight
+                      : t.themeDark}
+                </span>
+              </div>
+            </div>
+
+            <div
+              className={`rounded-lg border p-3 ${
+                isDark ? 'border-white/10 bg-black/20' : 'border-slate-200 bg-white/80'
+              }`}
+            >
+              <div className={`mb-2 text-[11px] font-semibold uppercase tracking-wider ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>
+                {t.scanRules}
+              </div>
+              <div className="space-y-2">
+                <label className={`block text-[11px] ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
+                  {t.scanRange}
+                  <textarea
+                    value={settings.includeRanges}
+                    onChange={(e) => setSettings((current) => ({ ...current, includeRanges: e.target.value }))}
+                    placeholder={t.scanRangePlaceholder}
+                    rows={2}
+                    className={textAreaClass}
+                  />
+                </label>
+
+                <label className={`block text-[11px] ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
+                  {t.excludePorts}
+                  <textarea
+                    value={settings.excludePorts}
+                    onChange={(e) => setSettings((current) => ({ ...current, excludePorts: e.target.value }))}
+                    placeholder={t.excludePortsPlaceholder}
+                    rows={2}
+                    className={textAreaClass}
+                  />
+                </label>
+
+                <label className={`block text-[11px] ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
+                  {t.excludeProcesses}
+                  <textarea
+                    value={settings.excludeProcesses}
+                    onChange={(e) => setSettings((current) => ({ ...current, excludeProcesses: e.target.value }))}
+                    placeholder={t.excludeProcessesPlaceholder}
+                    rows={2}
+                    className={textAreaClass}
+                  />
+                </label>
+
+                <label className={`block text-[11px] ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
+                  {t.allowProcesses}
+                  <textarea
+                    value={settings.allowProcesses}
+                    onChange={(e) => setSettings((current) => ({ ...current, allowProcesses: e.target.value }))}
+                    placeholder={t.allowProcessesPlaceholder}
+                    rows={2}
+                    className={textAreaClass}
+                  />
+                </label>
+              </div>
+            </div>
+
+            <div className={`mt-3 flex items-center justify-between text-[10px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+              <span>{t.lastUpdated}</span>
+              <span>{lastRefreshed ? new Date(lastRefreshed).toLocaleTimeString() : t.noTime}</span>
+            </div>
+
+            <div className="mt-3 flex items-center justify-between gap-2">
+              <StyledButton
+                kind="secondary"
+                isDark={isDark}
+                onClick={() => setSettings(DEFAULT_SCAN_SETTINGS)}
+              >
+                {t.clearRules}
+              </StyledButton>
+              <StyledButton
+                kind="primary"
+                isDark={isDark}
+                onClick={() => {
+                  void scanPorts()
+                  setIsSettingsOpen(false)
+                }}
+              >
+                {t.applyNow}
+              </StyledButton>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className={`border-b p-2 ${isDark ? 'border-white/8 bg-black/10' : 'border-slate-200/80 bg-slate-50/60'}`}>
+              <div className="relative">
+                <Search
+                  className={`absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 ${
+                    isDark ? 'text-slate-400' : 'text-slate-400'
+                  }`}
+                />
+                <input
+                  type="text"
+                  placeholder={t.searchPlaceholder}
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className={`w-full rounded-md border py-1.5 pl-8 pr-3 text-xs transition-all focus:outline-none focus:ring-1 ${
+                    isDark
+                      ? 'border-white/10 bg-black/20 text-white placeholder:text-slate-500 focus:border-emerald-500/50 focus:ring-emerald-500/50'
+                      : 'border-slate-300 bg-white text-slate-900 placeholder:text-slate-400 focus:border-emerald-500/60 focus:ring-emerald-500/40'
+                  }`}
+                />
+              </div>
+            </div>
+
+            <div className="max-h-[420px] flex-1 space-y-3 overflow-y-auto p-1.5">
+              {groupedServices.length === 0 ? (
+                <div className={`py-8 text-center text-xs ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>{t.emptyState}</div>
+              ) : (
+                groupedServices.map(([project, projectPorts]) => (
+                  <div key={project} className="space-y-0.5">
+                    <div className="flex items-center gap-2 px-2 py-1">
+                      <span className={`text-[10px] font-semibold uppercase tracking-wider ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{project}</span>
+                      <div className={`h-px flex-1 ${isDark ? 'bg-white/8' : 'bg-slate-200'}`} />
+                    </div>
+                    <div className="space-y-0.5">
+                      <AnimatePresence>
+                        {projectPorts.map((port) => {
+                          const key = getPortKey(port)
+                          return (
+                            <ServiceItem
+                              key={key}
+                              port={port}
+                              copied={copiedKey === key}
+                              isDark={isDark}
+                              locale={locale}
+                              onCopy={() => void handleCopy(port)}
+                              onOpen={() => void openInBrowser(port.port)}
+                              onOpenFolder={() => void openFolder(port.work_dir)}
+                              onHide={() => handleHide(port)}
+                              onTerminate={() => void killProcess(port.pid)}
+                            />
+                          )
+                        })}
+                      </AnimatePresence>
                     </div>
                   </div>
+                ))
+              )}
+            </div>
+          </>
+        )}
 
-                  {!collapsedGroups.includes(groupName) && (
-                    <div className="group-list">
-                      {groupPorts.map((port, index) => {
-                        const hasWorkDir = hasMeaningfulValue(port.work_dir)
-                        const groupScopedTitle = getPortTitle(port) === groupName ? null : getPortTitle(port)
-                          const portType = getPortType(port)
-                        const typeMeta = getTypeMeta(portType)
-
-                        return (
-                          <div key={`${port.pid}-${port.port}-${index}`} className="port-card">
-                            <div className="port-row">
-                              <div className="port-leading">
-                                <div className="port-content">
-                                  <div className="port-line">
-                                    <PreviewSiteIcon port={port} type={portType} />
-                                    <span className="port-number">{port.port}</span>
-                                    {groupScopedTitle ? <span className="project-name">{groupScopedTitle}</span> : null}
-                                    <span className={`type-chip type-chip-${typeMeta.tone}`}>{portType}</span>
-                                    <span className="protocol-chip">{port.protocol}</span>
-                                    <span className="port-meta">
-                                      <span className="process-name">{getProcessLabel(port)}</span>
-                                    </span>
-                                    
-                                  </div>
-                                  <div className="port-subline">
-                                    <span className="path-text">{getSourceSummary(port)}</span>
-                                    <span className="pid-text">PID {port.pid}</span>
-                                  </div>
-                                </div>
-                              </div>
-
-                              <div className="card-actions">
-                                <div className="port-actions">
-                                  <button
-                                    className="action-icon-btn"
-                                    onClick={() => openInBrowser(port.port)}
-                                    title="在浏览器中打开"
-                                  >
-                                    <ArrowUpRight size={16} strokeWidth={1.8} />
-                                  </button>
-                                  <button
-                                    className="action-icon-btn"
-                                    onClick={() => copyAddress(port)}
-                                    title="复制本地地址"
-                                  >
-                                    <Copy size={16} strokeWidth={1.8} />
-                                  </button>
-                                  <button
-                                    className="action-icon-btn"
-                                    onClick={() => openFolder(port.work_dir)}
-                                    title="打开项目目录"
-                                    disabled={!hasWorkDir}
-                                  >
-                                    <FolderOpen size={16} strokeWidth={1.8} />
-                                  </button>
-                                  <button
-                                    className="action-icon-btn terminate"
-                                    onClick={() =>
-                                      setPendingKill({
-                                        pid: port.pid,
-                                        port: port.port,
-                                        label: groupScopedTitle ?? groupName,
-                                      })
-                                    }
-                                    title="终止服务并释放端口"
-                                    aria-label={`终止端口 ${port.port} 的服务并释放端口`}
-                                  >
-                                    <CircleX size={16} strokeWidth={1.8} />
-                                  </button>
-                                  <button
-                                    className="action-icon-btn dismiss"
-                                    onClick={() => dismissPort(port)}
-                                    title="删除条目"
-                                    aria-label={`删除端口 ${port.port} 的条目`}
-                                  >
-                                    <Trash2 size={16} strokeWidth={1.8} />
-                                  </button>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  )}
-                </section>
-              ))
+        <div className={`flex items-center justify-between border-t px-3 py-2 text-[10px] ${
+          isDark ? 'border-white/10 bg-black/20 text-slate-400' : 'border-slate-200/80 bg-slate-50/80 text-slate-500'
+        }`}>
+          <div className="flex items-center gap-3">
+            <span className="flex items-center gap-1.5">
+              <span className={`h-1.5 w-1.5 rounded-full shadow-[0_0_4px_rgba(16,185,129,0.55)] ${isDark ? 'bg-emerald-400' : 'bg-emerald-500'}`} />
+              {visiblePorts.length} {t.activeCount}
+            </span>
+            {dismissedPorts.length > 0 && (
+              <span className="flex items-center gap-1.5">
+                <span className={`h-1.5 w-1.5 rounded-full ${isDark ? 'bg-slate-500' : 'bg-slate-400'}`} />
+                {dismissedPorts.length} {t.hiddenCount}
+              </span>
             )}
           </div>
-        )}
-
-        {!showSettings && (
-          <footer className="footer">
-            <div className="footer-meta">
-              <span>{totalPorts} 个端口</span>
-              <span className="timestamp">
-                {lastUpdated
-                  ? `更新于 ${new Date(lastUpdated).toLocaleTimeString('zh-CN', {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                      second: '2-digit',
-                    })}`
-                  : ''}
-              </span>
-            </div>
-            <div className="window-actions footer-actions">
-              <button
-                type="button"
-                className="icon-only-btn subtle"
-                onClick={() => setShowSettings((value) => !value)}
-                aria-label="打开扫描设置"
-              >
-                <SlidersHorizontal size={16} strokeWidth={1.8} />
-              </button>
-              <button
-                type="button"
-                className="icon-only-btn subtle"
-                onClick={scanPorts}
-                disabled={loading}
-                aria-label="刷新端口列表"
-              >
-                {loading ? (
-                  <LoaderCircle className="spin" size={16} strokeWidth={1.8} />
-                ) : (
-                  <RefreshCw size={16} strokeWidth={1.8} />
-                )}
-              </button>
-              <button
-                type="button"
-                className="icon-only-btn subtle"
-                onClick={hideWindow}
-                aria-label="隐藏窗口"
-              >
-                <X size={16} strokeWidth={1.8} />
-              </button>
-            </div>
-          </footer>
-        )}
+          <button
+            onClick={() => void hideWindow()}
+            className={`flex items-center gap-1 font-medium transition-colors ${
+              isDark ? 'hover:text-slate-200' : 'hover:text-slate-800'
+            }`}
+          >
+            <Power className="h-3 w-3" />
+            {t.hideWindow}
+          </button>
+        </div>
       </div>
     </div>
   )
 }
-
-export default App
