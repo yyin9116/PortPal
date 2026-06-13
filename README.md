@@ -17,7 +17,7 @@ PortPal 是一个常驻桌面托盘的本地端口管理工具，用来解决这
 - 扫描本机监听端口
 - 显示端口对应的进程、地址、命令和来源目录
 - 一键在浏览器打开本地服务
-- 一键打开项目目录或在 VSCode 中打开
+- 一键打开项目目录
 - 一键结束占用端口的进程
 - 从菜单栏图标快速唤起主窗口
 
@@ -29,7 +29,7 @@ PortPal 是一个常驻桌面托盘的本地端口管理工具，用来解决这
 
 - 托盘应用基础框架
 - 端口扫描与进程信息展示
-- 进程结束、浏览器打开、目录打开、VSCode 打开
+- 进程结束、浏览器打开、目录打开
 - 更紧凑的端口列表界面
 - 默认全端口扫描
 
@@ -102,7 +102,27 @@ cargo check
 - 前端构建
 - Rust `cargo check`
 
-当前没有配置自动发布和打包产物上传，也不会自动触发正式版本构建。
+## Release
+
+正式版本通过 annotated `v*` tag 触发，不会在普通 `main` push 时打包发布。
+
+发布前必须让这些版本号保持一致：
+
+- `package.json`
+- `src-tauri/tauri.conf.json`
+- `src-tauri/Cargo.toml`
+- `src-tauri/Cargo.lock`
+
+创建并推送发布 tag：
+
+```bash
+git tag -a v0.1.0 -m "v0.1.0" -m "Release notes..."
+git push origin v0.1.0
+```
+
+Release workflow 会先校验 tag 是 annotated tag、版本元数据一致、关键图标资产存在，然后并行构建 macOS Apple Silicon、macOS Intel 和 Windows x64 包，并把产物上传到 GitHub Draft Release。
+
+当前 workflow 未配置 Developer ID 签名、公证、自动更新或商店发布；发布给终端用户前需要按目标渠道补齐这些分发要求。
 
 ## 仓库
 

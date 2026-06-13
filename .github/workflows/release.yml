@@ -1,0 +1,240 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Annotated v* tag to package, for example v0.1.0'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: 24
+  APP_SLUG: portpal
+
+jobs:
+  validate-release:
+    name: Validate release metadata
+    runs-on: macos-latest
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+      release_body: ${{ steps.release.outputs.release_body }}
+      release_id: ${{ steps.github_release.outputs.release_id }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Validate annotated tag and versions
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            tag="${{ inputs.tag }}"
+          else
+            tag="${GITHUB_REF_NAME}"
+          fi
+
+          if [[ ! "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Release tag must look like v0.1.0 or v0.1.0-beta.1; got '${tag}'."
+            exit 1
+          fi
+
+          tag_type="$(git cat-file -t "${tag}")"
+          if [[ "${tag_type}" != "tag" ]]; then
+            echo "::error::Release tag '${tag}' must be annotated so the release body is auditable."
+            exit 1
+          fi
+
+          version="${tag#v}"
+          package_version="$(node -p "require('./package.json').version")"
+          tauri_version="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          cargo_version="$(awk '
+            /^\[package\]/ { in_package = 1; next }
+            /^\[/ && in_package { exit }
+            in_package && /^version = / {
+              gsub(/"/, "", $3)
+              print $3
+              exit
+            }
+          ' src-tauri/Cargo.toml)"
+          cargo_lock_version="$(awk '
+            /^\[\[package\]\]/ { in_package = 0 }
+            /^name = "portpal"/ { in_package = 1 }
+            in_package && /^version = / {
+              gsub(/"/, "", $3)
+              print $3
+              exit
+            }
+          ' src-tauri/Cargo.lock)"
+
+          for item in \
+            "package.json:${package_version}" \
+            "src-tauri/tauri.conf.json:${tauri_version}" \
+            "src-tauri/Cargo.toml:${cargo_version}" \
+            "src-tauri/Cargo.lock:${cargo_lock_version}"
+          do
+            file="${item%%:*}"
+            found="${item#*:}"
+            if [[ "${found}" != "${version}" ]]; then
+              echo "::error::${file} version '${found}' does not match tag '${tag}'."
+              exit 1
+            fi
+          done
+
+          if [[ ! -s "src-tauri/icons/icon.icns" || ! -s "src-tauri/icons/icon.ico" || ! -s "src-tauri/icons/128x128.png" ]]; then
+            echo "::error::Required bundle icon assets are missing or empty."
+            exit 1
+          fi
+
+          release_body="$(mktemp)"
+          git tag -l --format='%(contents)' "${tag}" > "${release_body}"
+          if [[ ! -s "${release_body}" ]]; then
+            echo "::error::Annotated tag '${tag}' must include release notes."
+            exit 1
+          fi
+
+          delimiter="PORTPAL_RELEASE_BODY_$(date +%s)_${RANDOM}"
+          {
+            echo "tag=${tag}"
+            echo "version=${version}"
+            echo "release_body<<${delimiter}"
+            cat "${release_body}"
+            echo "${delimiter}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Create or reuse draft release
+        id: github_release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          RELEASE_BODY: ${{ steps.release.outputs.release_body }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if release_id="$(gh release view "${RELEASE_TAG}" --json databaseId --jq '.databaseId' 2>/dev/null)"; then
+            echo "release_id=${release_id}" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          body_file="$(mktemp)"
+          printf '%s\n' "${RELEASE_BODY}" > "${body_file}"
+          release_flags=(--draft)
+          if [[ "${RELEASE_TAG}" == *-* ]]; then
+            release_flags+=(--prerelease)
+          fi
+
+          gh release create "${RELEASE_TAG}" \
+            --title "PortPal ${RELEASE_TAG}" \
+            --notes-file "${body_file}" \
+            "${release_flags[@]}"
+
+          release_id="$(gh release view "${RELEASE_TAG}" --json databaseId --jq '.databaseId')"
+          echo "release_id=${release_id}" >> "${GITHUB_OUTPUT}"
+
+  package:
+    name: Package ${{ matrix.label }}
+    needs: validate-release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: macOS Apple Silicon
+            os: macos-latest
+            rust_target: aarch64-apple-darwin
+            args: --target aarch64-apple-darwin
+            bundle_dir: src-tauri/target/aarch64-apple-darwin/release/bundle
+          - label: macOS Intel
+            os: macos-13
+            rust_target: x86_64-apple-darwin
+            args: --target x86_64-apple-darwin
+            bundle_dir: src-tauri/target/x86_64-apple-darwin/release/bundle
+          - label: Windows x64
+            os: windows-latest
+            rust_target: ''
+            args: ''
+            bundle_dir: src-tauri/target/release/bundle
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.validate-release.outputs.tag }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build and upload release bundles
+        id: tauri
+        uses: tauri-apps/tauri-action@v0.6.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          releaseId: ${{ needs.validate-release.outputs.release_id }}
+          tagName: ${{ needs.validate-release.outputs.tag }}
+          prerelease: ${{ contains(needs.validate-release.outputs.version, '-') }}
+          tauriScript: npm run tauri
+          args: ${{ matrix.args }}
+          includeUpdaterJson: false
+          assetNamePattern: ${{ env.APP_SLUG }}-${{ needs.validate-release.outputs.version }}-[platform]-[arch][setup].[ext]
+
+      - name: Verify bundle outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          bundle_dir="${{ matrix.bundle_dir }}"
+          if [[ ! -d "${bundle_dir}" ]]; then
+            echo "::error::Expected bundle directory '${bundle_dir}' was not created."
+            exit 1
+          fi
+
+          if ! find "${bundle_dir}" -type f -print -quit | grep -q .; then
+            echo "::error::Expected bundle directory '${bundle_dir}' does not contain files."
+            exit 1
+          fi
+
+          echo "Generated bundle files:"
+          find "${bundle_dir}" -type f -maxdepth 3 -print
+
+      - name: Summarize release build
+        shell: bash
+        run: |
+          {
+            echo "### PortPal release package"
+            echo ""
+            echo "- Tag: ${{ needs.validate-release.outputs.tag }}"
+            echo "- Target: ${{ matrix.label }}"
+            echo "- Draft release: true"
+            echo "- Signing/notarization: not configured in this workflow"
+          } >> "${GITHUB_STEP_SUMMARY}"
