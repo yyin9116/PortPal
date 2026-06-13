@@ -17,8 +17,7 @@ use tauri::{
     image::Image,
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent},
-    ActivationPolicy, LogicalSize, Manager, PhysicalPosition, Position, Rect, RunEvent, Size,
-    WindowEvent,
+    LogicalSize, Manager, PhysicalPosition, Position, Rect, Size, WindowEvent,
 };
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::EnvFilter;
@@ -426,7 +425,7 @@ pub fn run() {
         .setup(|app| {
             #[cfg(target_os = "macos")]
             {
-                let _ = app.set_activation_policy(ActivationPolicy::Accessory);
+                let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             }
 
             app.manage(PopupState::default());
@@ -489,11 +488,18 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
-    app.run(|app_handle, event| {
-        if let RunEvent::Reopen { .. } = event {
-            show_main_window(app_handle, None);
-        }
-    });
+    app.run(handle_run_event);
+}
+
+#[cfg(target_os = "macos")]
+fn handle_run_event<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>, event: tauri::RunEvent) {
+    if let tauri::RunEvent::Reopen { .. } = event {
+        show_main_window(app_handle, None);
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn handle_run_event<R: tauri::Runtime>(_app_handle: &tauri::AppHandle<R>, _event: tauri::RunEvent) {
 }
 
 fn init_logging() {
