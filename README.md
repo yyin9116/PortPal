@@ -1,129 +1,188 @@
-# PortPal
+<h1>
+  <img src="public/portpal-icon.svg" width="32" alt="" />
+  PortPal
+</h1>
 
-PortPal 是一个常驻桌面托盘的本地端口管理工具，用来解决这些高频问题：
+PortPal is a lightweight desktop utility for developers who need a fast,
+glanceable way to discover and manage local ports. It scans active listeners,
+shows the owning process and project context, and lets you open, inspect, hide,
+or stop local services from a compact tray-first app.
 
-- 不知道哪个进程占用了某个端口
-- 本地服务起不来，报 `EADDRINUSE`
-- 想快速打开服务、定位项目目录或结束占用进程
-- 需要从菜单栏随手查看当前机器正在监听的端口
+[View releases](https://github.com/yyin9116/PortPal/releases) ·
+[Release workflow](.github/workflows/release.yml) ·
+[CI workflow](.github/workflows/ci.yml)
 
-当前实现基于 `Tauri + Rust + React`：
+## What PortPal Helps With
 
-- `Rust` 负责端口扫描、进程识别、托盘和原生窗口行为
-- `React + TypeScript` 负责主界面和交互
+- Find which process is holding a port before `EADDRINUSE` interrupts your flow.
+- Open a detected local service in the browser.
+- Jump to the working directory behind a running service when it can be resolved.
+- Hide noisy entries from the current list.
+- Apply scan rules for include ranges, excluded ports, excluded process names, and allowed process names.
+- Switch between Chinese and English UI text.
+- Choose system, light, or dark theme.
+- Auto-refresh the port list or refresh manually from the tray/app UI.
+- Stop a process that owns a port when you explicitly choose to terminate it.
 
-## 面向用户的能力
+PortPal is built with Tauri, Rust, React, and TypeScript. Native work such as
+port scanning, process inspection, folder opening, browser launching, tray
+behavior, and process termination stays behind Tauri commands; the React UI
+handles presentation, preferences, and user interaction.
 
-- 扫描本机监听端口
-- 显示端口对应的进程、地址、命令和来源目录
-- 一键在浏览器打开本地服务
-- 一键打开项目目录
-- 一键结束占用端口的进程
-- 从菜单栏图标快速唤起主窗口
+## Current Status
 
-## 当前范围
+PortPal is in early `0.1.x` development. The current release packaging flow
+builds draft GitHub Releases for review before public publication.
 
-当前版本重点解决“发现端口占用并快速处理”的核心流程。
+| Area | Status |
+| --- | --- |
+| macOS Apple Silicon | Built by the release workflow |
+| macOS Intel | Built by the release workflow |
+| Windows x64 | Built by the release workflow |
+| Code signing | Not configured |
+| macOS notarization | Not configured |
+| Auto-update | Not configured |
+| Store distribution | Not configured |
 
-已完成：
+Because signing and notarization are not configured yet, downloaded builds may
+trigger operating-system security warnings. Review the draft release assets
+before publishing a release for end users.
 
-- 托盘应用基础框架
-- 端口扫描与进程信息展示
-- 进程结束、浏览器打开、目录打开
-- 更紧凑的端口列表界面
-- 默认全端口扫描
+## Install
 
-计划中的增强：
+Download builds from the GitHub Releases page when a release is published:
 
-- 扫描范围设置
-- 排除端口 / 排除进程 / 白名单进程
-- 更稳定的菜单栏弹出和窗口定位
-- 更完整的设置页
+- macOS Apple Silicon: `portpal-<version>-darwin-aarch64.dmg`
+- macOS Intel: `portpal-<version>-darwin-x64.dmg`
+- Windows x64: `portpal-<version>-windows-x64-setup.exe` or `portpal-<version>-windows-x64.msi`
 
-## 项目结构
+The release workflow intentionally creates draft releases first. Maintainers
+should verify the uploaded assets, release notes, and unsigned-build caveats
+before clicking **Publish release** in GitHub.
 
-```text
-PortPal/
-├── src/                 # React 界面
-├── src-tauri/           # Rust / Tauri 后端
-├── public/              # 静态资源
-├── index.html
-├── package.json
-├── vite.config.ts
-└── README.md
-```
+## Use
 
-其中：
+1. Launch PortPal.
+2. Open it from the menu bar/system tray.
+3. Review the active local listeners.
+4. Use the action buttons to copy a URL, open a service in the browser, open a
+   detected folder, hide an entry, or terminate the owning process.
+5. Open settings to adjust scan ranges, excluded ports/processes, allowlisted
+   processes, refresh interval, language, and theme.
 
-- `src-tauri/src/scanner.rs`：端口扫描
-- `src-tauri/src/process_info.rs`：进程信息识别
-- `src-tauri/src/process_control.rs`：结束进程
-- `src-tauri/src/lib.rs`：Tauri 命令、托盘、窗口行为
-- `src/App.tsx`：主界面
+Terminating a process is a deliberate user action. PortPal does not terminate
+processes automatically.
 
-## 本地开发
+## Privacy And Local Data
 
-前置依赖：
+PortPal is designed around local desktop inspection. It scans local listening
+ports and process metadata on the machine where it runs. The current app does
+not configure telemetry, cloud sync, or an auto-update channel.
 
-- Node.js 20+
+User preferences are stored in browser-style local storage inside the Tauri
+WebView:
+
+- scan settings
+- hidden port entries
+- refresh interval
+- language
+- theme mode
+
+Logs and diagnostics should avoid secrets, private file contents, and
+unnecessary full paths. Treat process command lines and working directories as
+potentially sensitive when sharing screenshots or bug reports.
+
+## Develop
+
+Prerequisites:
+
+- Node.js 24, matching the GitHub Actions workflows
 - Rust stable
-- macOS 下需要 Tauri 构建依赖
+- Tauri platform prerequisites for your operating system
 
-安装依赖：
+Install dependencies:
 
 ```bash
 npm ci
 ```
 
-启动开发环境：
+Run the Tauri desktop app in development:
 
 ```bash
 npm run tauri dev
 ```
 
-前端构建：
+Build the frontend:
 
 ```bash
 npm run build
 ```
 
-Rust 检查：
+Check the Rust backend:
 
 ```bash
-cd src-tauri
-cargo check
+cargo check --manifest-path src-tauri/Cargo.toml
 ```
 
-## CI
+## Project Layout
 
-仓库已配置 GitHub Actions 做基础检查：
+```text
+PortPal/
+├── src/                     # React UI
+│   ├── components/          # Shared UI components
+│   └── services/            # Tauri boundary and user preference helpers
+├── src-tauri/               # Rust/Tauri desktop backend
+│   ├── src/scanner.rs       # Listening-port scanner
+│   ├── src/process_info.rs  # Process and project metadata lookup
+│   ├── src/process_control.rs
+│   └── src/lib.rs           # Tauri commands, tray, window behavior, logging
+├── public/                  # Public frontend assets
+└── .github/workflows/       # CI and release automation
+```
 
-- Node 依赖安装
-- 前端构建
-- Rust `cargo check`
+## Verification
 
-## Release
+Fast CI runs on `main` pushes and pull requests:
 
-正式版本通过 annotated `v*` tag 触发，不会在普通 `main` push 时打包发布。
+- install Node dependencies with `npm ci`
+- build the frontend with `npm run build`
+- check the Rust backend with `cargo check`
 
-发布前必须让这些版本号保持一致：
+Release packaging is intentionally slower and only runs on explicit release
+triggers:
+
+- annotated `v*` tag push
+- manual `workflow_dispatch` with a tag
+
+The release workflow validates that:
+
+- the release tag is annotated
+- version metadata matches across `package.json`, `src-tauri/tauri.conf.json`,
+  `src-tauri/Cargo.toml`, and `src-tauri/Cargo.lock`
+- required bundle icon assets exist
+- expected bundle directories contain generated files
+
+## Release Process
+
+Keep these version fields in sync before tagging:
 
 - `package.json`
+- `package-lock.json`
 - `src-tauri/tauri.conf.json`
 - `src-tauri/Cargo.toml`
 - `src-tauri/Cargo.lock`
 
-创建并推送发布 tag：
+Create an annotated release tag with release notes:
 
 ```bash
-git tag -a v0.1.0 -m "v0.1.0" -m "Release notes..."
-git push origin v0.1.0
+git tag -a v0.1.1 -m "PortPal v0.1.1" -m "Release notes..."
+git push origin v0.1.1
 ```
 
-Release workflow 会先校验 tag 是 annotated tag、版本元数据一致、关键图标资产存在，然后并行构建 macOS Apple Silicon、macOS Intel 和 Windows x64 包，并把产物上传到 GitHub Draft Release。
+The workflow uploads macOS and Windows installers to a draft GitHub Release.
+Manual rebuilds can be triggered from GitHub Actions with the same annotated
+tag; existing generated assets for that version are cleared before rebuild.
 
-当前 workflow 未配置 Developer ID 签名、公证、自动更新或商店发布；发布给终端用户前需要按目标渠道补齐这些分发要求。
-
-## 仓库
+## Repository
 
 GitHub: [yyin9116/PortPal](https://github.com/yyin9116/PortPal)
